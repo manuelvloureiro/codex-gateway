@@ -1,0 +1,45 @@
+name: codex-gateway
+
+# Presents a ChatGPT Plus/Pro subscription as a keyless OpenAI-compatible
+# provider on :8085, container and host alike.
+#
+# Sign in either way:
+#   docker compose run --rm codex-gateway python -m codex_gateway.login
+#   docker compose up -d codex-gateway && open http://localhost:8085/
+services:
+  codex-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: codex-gateway
+    expose:
+      - "8085"
+    # Loopback by default. To reach it from another machine, either tunnel
+    #   ssh -N -L 8085:localhost:8085 user@this-host
+    # or bind an interface with CODEX_GATEWAY_BIND=<private-address> — and set
+    # CODEX_ADMIN_TOKEN when you do.
+    ports:
+      - "${CODEX_GATEWAY_BIND:-127.0.0.1}:${CODEX_GATEWAY_HOST_PORT:-8085}:8085"
+    environment:
+      CODEX_GATEWAY_HOME: /data
+      CODEX_GATEWAY_PORT: "8085"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # When set, /auth/* requires `Authorization: Bearer <token>`.
+      CODEX_ADMIN_TOKEN: ${CODEX_ADMIN_TOKEN:-}
+      # 0 stops serving the reference page at /.
+      CODEX_UI: ${CODEX_UI:-1}
+    volumes:
+      - codex-auth:/data
+    # Not unless-stopped: it starts unauthenticated on purpose, so a
+    # restart-always policy would fight the login flow.
+    restart: on-failure:3
+
+volumes:
+  # Holds auth.json. Deleting this volume means redoing the device login.
+  #
+  # The name is pinned rather than derived from the compose project, so a
+  # standalone `docker compose up` here and an `include:` from a larger stack
+  # both land on the same volume. Without the pin they diverge, because an
+  # including stack's project name overrides the one above.
+  codex-auth:
+    name: codex-gateway-auth

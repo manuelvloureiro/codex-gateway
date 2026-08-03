@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+*.vsix
+
+# Environments — uv builds .venv from pyproject.toml + uv.lock, both tracked
+.venv/
+venv/
+env/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Local configuration and credentials. auth.json holds a live ChatGPT OAuth
+# token pair — it belongs in the /data volume, never in the repo.
+.env
+.env.*
+!.env.example
+auth.json
+*.auth.json
+data/
+
+# Editors / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store

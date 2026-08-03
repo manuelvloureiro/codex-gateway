@@ -1,0 +1,283 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>codex-gateway</title>
+<!--
+  Reference UI for the /auth/* API. Deliberately minimal: no framework, no
+  build step, one file. It signs the gateway in and proves it works, and shows
+  the call sequence for wiring this service into a real front end.
+
+  The whole flow is four fetches:
+    GET  /auth/status                      is there a credential?
+    POST /auth/login/start                 -> { device_auth_id, user_code, verification_uri, interval }
+    POST /auth/login/poll {device_auth_id} -> { status: "pending" | "complete" }   repeat every `interval`
+    POST /auth/import                      adopt the local Codex CLI's tokens instead
+
+  Most gateways run without CODEX_ADMIN_TOKEN, so the token field stays hidden
+  until a request actually comes back 403. It must never stand between the user
+  and a login they can already perform.
+-->
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 15px/1.6 system-ui, sans-serif; max-width: 36rem; margin: 2.5rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.3rem; margin: 0 0 .2rem; }
+  .sub { opacity: .7; margin: 0 0 1.5rem; font-size: .9rem; }
+  section { border: 1px solid #8883; border-radius: 8px; padding: 1rem; margin-bottom: 1rem; }
+  h2 { font-size: 1rem; margin: 0 0 .7rem; }
+  button { font: inherit; padding: .45rem .9rem; border-radius: 6px; border: 1px solid #8886;
+           background: #8881; color: inherit; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.primary { background: #2563eb; color: #fff; border-color: #2563eb; }
+  input, select { font: inherit; padding: .4rem; border-radius: 6px; border: 1px solid #8886;
+                  background: transparent; color: inherit; }
+  input { width: 100%; box-sizing: border-box; }
+  ol { padding-left: 1.2rem; margin: .6rem 0 0; }
+  li { margin-bottom: .9rem; }
+  .code { font: 700 1.9rem/1 ui-monospace, monospace; letter-spacing: .12em;
+          padding: .6rem .8rem; border: 1px dashed #8886; border-radius: 8px;
+          display: inline-block; user-select: all; }
+  pre { background: #8881; padding: .7rem; border-radius: 6px; overflow-x: auto; font-size: .85rem; }
+  .row { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+  .hidden { display: none; }
+  .err { color: #dc2626; }
+  .ok { color: #16a34a; }
+  .muted { opacity: .7; font-size: .9rem; }
+</style>
+
+<h1>codex-gateway</h1>
+<p class="sub">ChatGPT subscription → OpenAI-compatible endpoint</p>
+
+<!-- 1. Sign in. First on the page, because it is the first thing to do. -->
+<section>
+  <h2>Sign in</h2>
+
+  <div id="signed-in" class="hidden">
+    <p class="ok">Signed in as <strong id="acct"></strong>.</p>
+    <div class="row">
+      <button onclick="call('/auth/refresh')">refresh token</button>
+      <button onclick="call('/auth/logout')">log out</button>
+    </div>
+  </div>
+
+  <div id="signed-out">
+    <div class="row">
+      <button class="primary" id="start" onclick="startLogin()">start device login</button>
+      <button onclick="call('/auth/import')">import from Codex CLI</button>
+    </div>
+
+    <div id="pending" class="hidden">
+      <ol>
+        <li>
+          Open this page, on any device:
+          <div class="row" style="margin-top:.4rem">
+            <a id="url" target="_blank" rel="noopener"></a>
+            <button onclick="copy($('url').textContent, this)">copy link</button>
+          </div>
+        </li>
+        <li>
+          Enter this code there:
+          <div class="row" style="margin-top:.4rem">
+            <span class="code" id="code"></span>
+            <button onclick="copy($('code').textContent, this)">copy code</button>
+          </div>
+        </li>
+        <li id="wait" class="muted">Waiting for approval — this page picks it up on its own.</li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<!-- 2. Prove it actually works. -->
+<section>
+  <h2>Send a test message</h2>
+  <div class="row">
+    <select id="model"></select>
+    <button id="send" onclick="testCompletion()">send</button>
+  </div>
+  <input id="prompt" value="Say hello in five words." style="margin-top:.5rem">
+  <pre id="reply" class="hidden"></pre>
+</section>
+
+<!-- 3. Detail, for when something looks wrong. -->
+<section>
+  <h2>Status</h2>
+  <pre id="status">loading…</pre>
+  <button onclick="refreshStatus()">refresh</button>
+</section>
+
+<!-- Only appears if the server answers 403. -->
+<section id="admin" class="hidden">
+  <h2>Admin token required</h2>
+  <p class="muted">
+    This gateway was started with <code>CODEX_ADMIN_TOKEN</code> set, so the
+    sign-in routes ask for it. It stops others who can reach this port from
+    signing you out or hijacking a login.
+  </p>
+  <input id="token" type="password" placeholder="paste CODEX_ADMIN_TOKEN">
+  <p><button onclick="retryAfterToken()">continue</button></p>
+</section>
+
+<p id="error" class="err"></p>
+
+<script>
+const $ = id => document.getElementById(id);
+
+// Every /auth/* call goes through here. The only auth-specific detail is the
+// bearer header, which is a no-op when the service has no admin token set.
+async function api(path, body) {
+  const headers = {};
+  const token = $("token").value.trim();
+  if (token) headers["Authorization"] = "Bearer " + token;
+  if (body) headers["Content-Type"] = "application/json";
+
+  const res = await fetch(path, {
+    method: path === "/auth/status" ? "GET" : "POST",
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 403 && data?.error?.code === "admin_token_required") {
+    $("admin").classList.remove("hidden");
+    $("token").focus();
+    throw new Error("this gateway needs an admin token — see the box below");
+  }
+  if (!res.ok) throw new Error(data?.error?.message || `${path} -> ${res.status}`);
+  return data;
+}
+
+function retryAfterToken() {
+  $("error").textContent = "";
+  $("admin").classList.add("hidden");
+  refreshStatus();
+}
+
+function fail(err) { $("error").textContent = err.message; }
+
+async function copy(text, btn) {
+  try {
+    await navigator.clipboard.writeText(text);
+    const was = btn.textContent;
+    btn.textContent = "copied";
+    setTimeout(() => { btn.textContent = was; }, 1200);
+  } catch { /* clipboard needs https or localhost; the text is select-all anyway */ }
+}
+
+async function refreshStatus() {
+  $("error").textContent = "";
+  try {
+    const status = await api("/auth/status");
+    $("status").textContent = JSON.stringify(status, null, 2);
+    $("signed-in").classList.toggle("hidden", !status.authenticated);
+    $("signed-out").classList.toggle("hidden", !!status.authenticated);
+    $("acct").textContent = status.account_id || "unknown account";
+  } catch (err) {
+    fail(err);
+    $("status").textContent = "unavailable";
+  }
+}
+
+async function call(path) {
+  $("error").textContent = "";
+  try { await api(path, {}); } catch (err) { fail(err); }
+  refreshStatus();
+}
+
+async function startLogin() {
+  $("error").textContent = "";
+  $("start").disabled = true;
+  try {
+    const started = await api("/auth/login/start", {});
+    $("url").textContent = started.verification_uri;
+    $("url").href = started.verification_uri;
+    $("code").textContent = started.user_code;
+    $("pending").classList.remove("hidden");
+    poll(started.device_auth_id, started.interval);
+  } catch (err) {
+    fail(err);
+    $("start").disabled = false;
+  }
+}
+
+// Poll at the interval the server asked for, until it says complete.
+function poll(deviceAuthId, interval) {
+  const timer = setInterval(async () => {
+    try {
+      const res = await api("/auth/login/poll", { device_auth_id: deviceAuthId });
+      if (res.status !== "complete") return;
+      clearInterval(timer);
+      $("pending").classList.add("hidden");
+      $("start").disabled = false;
+      refreshStatus();
+    } catch (err) {
+      clearInterval(timer);
+      fail(err);
+      $("start").disabled = false;
+    }
+  }, Math.max(1, interval || 5) * 1000);
+}
+
+// The other half of "does this work": the provider surface itself. An ordinary
+// OpenAI chat/completions call — no gateway-specific anything, which is the point.
+async function loadModels() {
+  try {
+    const { data } = await (await fetch("/models")).json();
+    $("model").innerHTML = data.map(m => `<option>${m.id}</option>`).join("");
+  } catch { /* /models is static; a failure here just leaves the list empty */ }
+}
+
+// Streams with `stream: true` and appends each delta as it lands, so the reply
+// appears token by token rather than in one lump at the end. Reading the body
+// with a ReadableStream reader is the only part that differs from a plain
+// request — the SSE framing below is standard OpenAI.
+async function testCompletion() {
+  $("error").textContent = "";
+  $("send").disabled = true;
+  $("reply").classList.remove("hidden");
+  $("reply").textContent = "";
+  try {
+    const res = await fetch("/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: $("model").value,
+        messages: [{ role: "user", content: $("prompt").value }],
+        stream: true,
+      }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data?.error?.message || `HTTP ${res.status}`);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      // Frames are newline-delimited; keep the trailing partial one.
+      const lines = buffer.split("\n");
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const payload = line.slice(6).trim();
+        if (payload === "[DONE]") continue;
+        try {
+          const delta = JSON.parse(payload).choices?.[0]?.delta;
+          if (delta?.content) $("reply").textContent += delta.content;
+          if (delta?.tool_calls) $("reply").textContent += "\n[tool call]\n";
+        } catch { /* a partial or malformed frame is not worth aborting for */ }
+      }
+    }
+    if (!$("reply").textContent) $("reply").textContent = "(empty response)";
+  } catch (err) {
+    fail(err);
+    $("reply").textContent = "failed";
+  }
+  $("send").disabled = false;
+}
+
+refreshStatus();
+loadModels();
+</script>

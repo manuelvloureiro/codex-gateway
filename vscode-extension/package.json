@@ -1,0 +1,180 @@
+{
+  "name": "codex-gateway-acp",
+  "displayName": "Codex Gateway ACP",
+  "description": "Repository-owned ACP client for codex-gateway",
+  "version": "0.1.0",
+  "publisher": "manuelvloureiro",
+  "license": "UNLICENSED",
+  "private": true,
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "categories": [
+    "AI",
+    "Other"
+  ],
+  "main": "./src/extension.js",
+  "extensionKind": [
+    "workspace"
+  ],
+  "activationEvents": [
+    "onView:codexGateway.chat",
+    "onCommand:codexGateway.newSession",
+    "onCommand:codexGateway.cancelTurn",
+    "onCommand:codexGateway.restartAgent",
+    "onCommand:codexGateway.showLogs"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "The ACP agent can edit files and run commands, so Workspace Trust is required."
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "The ACP launcher and Codex tools require a local filesystem workspace."
+    }
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "codexGateway",
+          "title": "Codex Gateway",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "codexGateway": [
+        {
+          "type": "webview",
+          "id": "codexGateway.chat",
+          "name": "ACP Chat",
+          "icon": "media/icon.svg",
+          "contextualTitle": "Codex Gateway ACP"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "codexGateway.newSession",
+        "title": "Codex Gateway: New ACP Session",
+        "icon": "$(add)"
+      },
+      {
+        "command": "codexGateway.cancelTurn",
+        "title": "Codex Gateway: Cancel Turn",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "codexGateway.restartAgent",
+        "title": "Codex Gateway: Restart ACP Agent",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "codexGateway.showLogs",
+        "title": "Codex Gateway: Show ACP Logs",
+        "icon": "$(output)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "codexGateway.newSession",
+          "when": "view == codexGateway.chat",
+          "group": "navigation@1"
+        },
+        {
+          "command": "codexGateway.cancelTurn",
+          "when": "view == codexGateway.chat",
+          "group": "navigation@2"
+        },
+        {
+          "command": "codexGateway.restartAgent",
+          "when": "view == codexGateway.chat",
+          "group": "navigation@3"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Codex Gateway ACP",
+      "properties": {
+        "codexGateway.launcherPath": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "description": "ACP launcher executable. Empty auto-discovers this checkout's .venv and then uses codex-gateway-acp from PATH. Supports ${workspaceFolder}."
+        },
+        "codexGateway.launcherArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "description": "Arguments passed directly to the ACP launcher without a shell."
+        },
+        "codexGateway.gatewayUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8085/v1",
+          "scope": "resource",
+          "description": "codex-gateway base URL as seen by the extension host."
+        },
+        "codexGateway.model": {
+          "type": "string",
+          "default": "gpt-5.6-sol",
+          "scope": "resource",
+          "description": "Initial model for new ACP sessions."
+        },
+        "codexGateway.initialMode": {
+          "type": "string",
+          "enum": [
+            "read-only",
+            "agent",
+            "agent-full-access"
+          ],
+          "enumDescriptions": [
+            "Require approval for edits and commands.",
+            "Allow workspace edits and sandboxed commands.",
+            "Allow unsandboxed commands without approval. Use only for deliberately trusted tasks."
+          ],
+          "default": "read-only",
+          "scope": "resource",
+          "description": "Initial approval and sandbox preset."
+        },
+        "codexGateway.adapterPath": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "description": "Optional absolute codex-acp executable supplied as CODEX_ACP_BIN. Empty uses the launcher's pinned npx package."
+        },
+        "codexGateway.workingDirectory": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "description": "ACP session working directory. Empty uses the first filesystem workspace folder. Supports ${workspaceFolder}."
+        },
+        "codexGateway.permissionPolicy": {
+          "type": "string",
+          "enum": [
+            "ask",
+            "deny"
+          ],
+          "default": "ask",
+          "scope": "resource",
+          "description": "Ask in trusted VS Code UI or deny every ACP permission request."
+        },
+        "codexGateway.logProtocol": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "description": "Log complete ACP frames. May expose prompts, source, diffs, tool output, and permission details."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "package": "npx --yes @vscode/vsce@3.9.2 package --out codex-gateway-acp-vscode.vsix"
+  }
+}
