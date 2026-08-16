@@ -123,6 +123,11 @@
   details[open] { padding-bottom: .8rem; }
   summary { cursor: pointer; font-weight: 600; font-size: .92rem; padding: .15rem 0; }
   summary::marker { color: #8888; }
+  summary:hover { color: var(--accent); }
+  /* The recipes are alternatives, so each one says who it is for on its row —
+     the reader picks without opening all four. */
+  .hint { font-weight: 400; opacity: .55; font-size: .84rem; margin-left: .5rem; }
+  .pick { font-size: .84rem; opacity: .55; margin: 1rem 0 .1rem; }
 
   details.diag { border: 1px solid var(--line); border-radius: 10px; padding: .6rem 1.15rem; }
   details.diag[open] { padding-bottom: 1rem; }
@@ -143,6 +148,20 @@
   <h2>Sign in</h2>
   <p class="lede">One login per gateway. Tokens are stored in the container's
     <code>/data</code> volume and refresh on their own.</p>
+
+  <!-- Hidden until a request actually comes back 403 — it must never stand
+       between the user and a login they can already perform. It belongs inside
+       this block, above the buttons, because it gates exactly these buttons.
+       Anywhere else and the reader has to be told where to look. -->
+  <div id="admin" class="note hidden">
+    <strong>This gateway needs an admin token.</strong> It was started with
+    <code>CODEX_ADMIN_TOKEN</code> set, so the sign-in routes ask for it. That
+    stops anyone who can reach this port from signing you out or hijacking a
+    login — it does <em>not</em> gate model use.
+    <input id="token" type="password" placeholder="paste CODEX_ADMIN_TOKEN"
+           style="margin:.6rem 0 .5rem">
+    <button onclick="retryAfterToken()">continue</button>
+  </div>
 
   <div id="signed-in" class="hidden">
     <p class="ok" style="margin:.2rem 0 .7rem">Signed in as <strong id="acct"></strong>.</p>
@@ -195,20 +214,6 @@
   <pre id="reply" class="hidden"></pre>
 </section>
 
-<!-- Appears only if the server actually answers 403. Lives in the act lane
-     because it is a credential prompt, not documentation. -->
-<section class="act hidden" id="admin">
-  <p class="eyebrow">Credential</p>
-  <h2>Admin token required</h2>
-  <p class="lede">
-    This gateway was started with <code>CODEX_ADMIN_TOKEN</code> set, so the
-    sign-in routes ask for it. It stops others who can reach this port from
-    signing you out or hijacking a login. It does <em>not</em> gate model use.
-  </p>
-  <input id="token" type="password" placeholder="paste CODEX_ADMIN_TOKEN">
-  <p style="margin-bottom:0"><button onclick="retryAfterToken()">continue</button></p>
-</section>
-
 <p id="error" class="err"></p>
 
 </div><!-- ── /things you do ───────────────────────────────────────────── -->
@@ -238,52 +243,72 @@
     already clicked through — <code>curl</code>, Node, the ACP launcher — will
     refuse the connection until that root certificate is installed on the
     machine making the request. Once per device.
+
+    <!-- Shown only if /ca.crt actually answers. No browser lets a page install
+         a root certificate — that is the whole point of a trust store — so the
+         download plus the right command is as automated as this can get. -->
+    <div id="ca-install" class="hidden" style="margin-top:.7rem">
+      <div class="row">
+        <a id="ca-dl" href="/ca.crt" download="codex-gateway-root.crt">
+          <button class="ghost">download certificate</button>
+        </a>
+        <select id="ca-os" onchange="renderCaCommand()">
+          <option value="linux">Linux</option>
+          <option value="mac">macOS</option>
+          <option value="win">Windows</option>
+        </select>
+      </div>
+      <pre id="cmd-ca"></pre>
+      <div class="row" style="margin-top:.4rem">
+        <button class="ghost" onclick="copy($('cmd-ca').textContent, this)">copy</button>
+      </div>
+    </div>
   </div>
 
-  <details open>
-    <summary>VS Code, across the network</summary>
+  <p class="pick">Pick one — they are alternatives, not steps.</p>
+
+  <details>
+    <summary>VS Code<span class="hint">the ACP extension, four steps</span></summary>
     <p class="muted" style="margin-top:.5rem">
-      The extension is <strong>not</strong> an HTTP client. It spawns
-      <code>codex-gateway-acp</code> as a child process on the machine your code
-      is on, and <em>that</em> process makes the request. The checkout, Python
-      and Node all live on your machine; only model traffic crosses the network.
-      So <code>127.0.0.1</code> there means <em>your</em> machine — use the
-      address above instead.
+      The extension is <strong>not</strong> an HTTP client — it spawns
+      <code>codex-gateway-acp</code> on the machine your code is on, and
+      <em>that</em> process calls the gateway. So <code>127.0.0.1</code> there
+      means <em>your</em> machine; use the address above. Needs Python 3.11+,
+      Node 20+, VS Code 1.100+.
     </p>
     <ol>
-      <li>Python 3.11+, Node.js 20+, VS Code 1.100+. On Windows use WSL or a Dev
-        Container; the launcher is a POSIX entry point.</li>
       <li>Build the launcher where your code is:
         <pre id="cmd-launcher"></pre>
       </li>
-      <li>Package and install the in-repo client, then reload VS Code:
+      <li>Package and install the client, then reload VS Code:
         <pre id="cmd-vsix"></pre>
       </li>
-      <li>Point it here, in user <code>settings.json</code>.
-        <code>launcherPath</code> is the absolute path on <em>your</em> machine:
+      <li>Add to user <code>settings.json</code> —
+        <code>launcherPath</code> absolute, on <em>your</em> machine:
         <pre id="cmd-settings"></pre>
         <div class="row" style="margin-top:.4rem">
           <button class="ghost" onclick="copy($('cmd-settings').textContent, this)">copy settings</button>
         </div>
       </li>
-      <li>Open a trusted local folder, click <strong>Codex Gateway</strong> in
-        the Activity Bar, send a task. If nothing happens, run
-        <strong>Codex Gateway: Show ACP Logs</strong>.</li>
+      <li>Open a trusted folder → <strong>Codex Gateway</strong> in the Activity
+        Bar → send a task. Stuck? <strong>Codex Gateway: Show ACP Logs</strong>.</li>
     </ol>
   </details>
 
   <details>
-    <summary>Any OpenAI-compatible client</summary>
+    <summary>curl<span class="hint">check it from a shell</span></summary>
     <pre id="cmd-curl"></pre>
-    <p class="muted" style="margin-top:.7rem">For Bifrost, or anything else that
-      takes a provider block:</p>
+  </details>
+
+  <details>
+    <summary>Bifrost &amp; friends<span class="hint">keyless provider block</span></summary>
     <pre id="cmd-provider"></pre>
   </details>
 
   <details>
-    <summary>Off the network? Tunnel instead</summary>
+    <summary>SSH tunnel<span class="hint">when there is no network route</span></summary>
     <p class="muted" style="margin-top:.5rem">The gateway also listens on the
-      host's loopback. Nothing new is exposed and no certificate is involved:</p>
+      host's loopback. Nothing new is exposed, no certificate involved:</p>
     <pre id="cmd-tunnel"></pre>
   </details>
 </section>
@@ -318,7 +343,7 @@ async function api(path, body) {
   if (res.status === 403 && data?.error?.code === "admin_token_required") {
     $("admin").classList.remove("hidden");
     $("token").focus();
-    throw new Error("this gateway needs an admin token — see the box below");
+    throw new Error("this gateway needs an admin token — the field is in the sign-in block");
   }
   if (!res.ok) throw new Error(data?.error?.message || `${path} -> ${res.status}`);
   return data;
@@ -526,7 +551,51 @@ function renderConnect(model) {
     "# then point clients at http://127.0.0.1:8085/v1";
 }
 
+// The one step a page genuinely cannot do for you. Browsers expose no API to
+// add a root certificate — a page that could would be able to impersonate any
+// site — so this fetches it and hands over the exact command instead of making
+// the reader find the file and remember their platform's incantation.
+function renderCaCommand() {
+  const url = location.origin + "/ca.crt";
+  const cmds = {
+    linux:
+      `curl -fsSk ${url} | sudo tee /usr/local/share/ca-certificates/codex-gateway-root.crt >/dev/null\n` +
+      "sudo update-ca-certificates",
+    mac:
+      `curl -fsSk ${url} -o codex-gateway-root.crt\n` +
+      "sudo security add-trusted-cert -d -r trustRoot \\\n" +
+      "  -k /Library/Keychains/System.keychain codex-gateway-root.crt",
+    win:
+      `curl.exe -fsSk ${url} -o codex-gateway-root.crt\n` +
+      "certutil -addstore -f Root codex-gateway-root.crt   :: run as Administrator",
+  };
+  $("cmd-ca").textContent = cmds[$("ca-os").value] || cmds.linux;
+}
+
+// -k on the fetch above is deliberate and safe here: it is the certificate
+// itself being fetched, over a connection that cannot yet be verified. Compare
+// the downloaded root against the one your browser already shows if it matters.
+function guessOs() {
+  const s = (navigator.userAgentData?.platform || navigator.platform || navigator.userAgent || "");
+  if (/mac|darwin|iphone|ipad/i.test(s)) return "mac";
+  if (/win/i.test(s)) return "win";
+  return "linux";
+}
+
+// Only offer any of this if the gateway was actually told about a CA file.
+async function probeCa() {
+  if (location.protocol !== "https:" || LOOPBACK) return;
+  try {
+    const res = await fetch("/ca.crt", { method: "GET" });
+    if (!res.ok) return;
+    $("ca-os").value = guessOs();
+    renderCaCommand();
+    $("ca-install").classList.remove("hidden");
+  } catch { /* no CA configured, or unreachable — leave the note text alone */ }
+}
+
 renderConnect(DEFAULT_MODEL);   // render now; loadModels refines the model name
+probeCa();
 refreshStatus();
 loadModels();
 </script>

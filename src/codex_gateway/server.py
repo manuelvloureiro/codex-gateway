@@ -405,6 +405,35 @@ async def handle_index(_request: web.Request) -> web.Response:
         return _error(f"reference UI not found at {login_page()}", 404, "ui_missing")
 
 
+async def handle_ca(_request: web.Request) -> web.Response:
+    """Hand out the CA certificate this service is fronted by, if told about one.
+
+    A private CA is the one setup step no amount of UI can remove: browsers
+    deliberately expose no way for a page to install a root, because a page that
+    could would be able to forge any site. Serving the certificate is the most
+    that can be automated — the client still installs it deliberately.
+
+    Off unless CODEX_CA_FILE names a readable file. The gateway is not
+    necessarily behind a private CA, and it never guesses which one.
+    """
+    path = os.getenv("CODEX_CA_FILE", "").strip()
+    if not path:
+        return _error("no CA certificate configured (set CODEX_CA_FILE)", 404, "ca_not_configured")
+    try:
+        pem = Path(path).read_bytes()
+    except OSError:
+        return _error(f"CA certificate not readable at {path}", 404, "ca_missing")
+    # An empty file means the placeholder mount is in place and no real CA was
+    # supplied. Serving nothing would look like success to the page.
+    if not pem.strip():
+        return _error(f"CA certificate at {path} is empty", 404, "ca_missing")
+    return web.Response(
+        body=pem,
+        content_type="application/x-x509-ca-cert",
+        headers={"Content-Disposition": 'attachment; filename="codex-gateway-root.crt"'},
+    )
+
+
 # --------------------------------------------------------------------------
 # App
 # --------------------------------------------------------------------------
@@ -426,6 +455,7 @@ def build_app(session_factory=None) -> web.Application:
         app.router.add_get(f"{prefix}/models", handle_models)
 
     app.router.add_get("/", handle_index)
+    app.router.add_get("/ca.crt", handle_ca)
     app.router.add_get("/health", handle_health)
     app.router.add_get("/auth/status", handle_auth_status)
     app.router.add_post("/auth/login/start", handle_login_start)

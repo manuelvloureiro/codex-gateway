@@ -80,6 +80,7 @@ fails if this table drifts from what the app registers.
 | Method | Path | Auth | Purpose |
 | --- | --- | --- | --- |
 | `GET` | `/` | — | Reference UI (`app/index.html`). |
+| `GET` | `/ca.crt` | — | The certificate named by `CODEX_CA_FILE`, as a download. `404` when unset. |
 | `GET` | `/health` | — | `200` when signed in, `503` when not. Body is the credential status. |
 | `GET` | `/models` | — | Static catalogue from `CODEX_MODELS`. |
 | `POST` | `/responses` | — | Proxied upstream unchanged, bar the forced invariants. Streams SSE. |
@@ -317,6 +318,7 @@ path for offline or tightly controlled environments.
 | `CODEX_MODELS` | `gpt-5.6-sol,gpt-5.4` | Static `/models` catalogue. |
 | `CODEX_BASE_URL` | ChatGPT backend | Upstream override. |
 | `CODEX_UI` | `1` | `0` stops serving the reference page at `/`. |
+| `CODEX_CA_FILE` | *(unset)* | PEM certificate to serve at `/ca.crt`. Set it when a private CA fronts this service, so clients can fetch the root instead of hunting for it. Nothing is guessed. |
 | `CODEX_UI_DIR` | `./app` | Where to read `index.html` from. |
 | `CODEX_CLI_VERSION` | `0.146.0` | Version pinned in the `codex_cli_rs` User-Agent. |
 | `LOG_LEVEL` | `INFO` | |

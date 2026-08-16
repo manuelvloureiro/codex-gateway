@@ -31,6 +31,9 @@ services:
       # Where `login --import` looks for the Codex CLI's own store, which is
       # the mount below rather than a home directory inside the container.
       CODEX_HOME: /host-codex
+      # Set to /etc/codex-gateway/ca.pem to serve the CA below at /ca.crt.
+      # Unset by default: most deployments are not behind a private CA.
+      CODEX_CA_FILE: ${CODEX_CA_FILE:-}
     volumes:
       - codex-auth:/data
       # Read-only view of the host's Codex CLI store, so `login --import` has
@@ -41,6 +44,11 @@ services:
       #   docker compose run --rm --user root codex-gateway \
       #     sh -c 'python -m codex_gateway.login --import && chown -R 10004:10004 /data'
       - ${CODEX_CLI_HOME:-~/.codex}:/host-codex:ro
+      # The root certificate of whatever fronts this service, so clients can
+      # fetch it from /ca.crt instead of being told to go and find it. The
+      # /dev/null default keeps the mount valid when there is no private CA;
+      # the handler treats an empty file as "not configured".
+      - ${CODEX_CA_HOST_FILE:-/dev/null}:/etc/codex-gateway/ca.pem:ro
     # Not unless-stopped: it starts unauthenticated on purpose, so a
     # restart-always policy would fight the login flow.
     restart: on-failure:3
