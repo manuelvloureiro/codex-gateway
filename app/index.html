@@ -41,6 +41,14 @@
   .err { color: #dc2626; }
   .ok { color: #16a34a; }
   .muted { opacity: .7; font-size: .9rem; }
+  h3 { font-size: .95rem; margin: 1.4rem 0 .5rem; }
+  h3:first-of-type { margin-top: .8rem; }
+  .mono { font-family: ui-monospace, monospace; font-size: .9rem;
+          padding: .3rem .5rem; border: 1px dashed #8886; border-radius: 6px;
+          display: inline-block; user-select: all; word-break: break-all; }
+  .note { border-left: 3px solid #f59e0b; padding: .1rem 0 .1rem .7rem; margin: .8rem 0;
+          font-size: .9rem; }
+  code { font-family: ui-monospace, monospace; font-size: .9em; }
 </style>
 
 <h1>codex-gateway</h1>
@@ -97,7 +105,81 @@
   <pre id="reply" class="hidden"></pre>
 </section>
 
-<!-- 3. Detail, for when something looks wrong. -->
+<!-- 3. Connect something real to it. Every URL below is derived from
+     location.origin rather than hardcoded, so the page tells each visitor the
+     address that actually works for them — loopback, a VPN name, whatever they
+     browsed in on. Nothing here is host-specific. -->
+<section>
+  <h2>Connect</h2>
+
+  <p class="muted">Base URL for any OpenAI-compatible client. No API key — this
+  gateway holds the credential, so register it keyless.</p>
+  <div class="row">
+    <span class="mono" id="base-url"></span>
+    <button onclick="copy($('base-url').textContent, this)">copy</button>
+  </div>
+
+  <!-- Only when reached over https on a name other than loopback: the cert
+       comes from a private CA the client has no reason to trust yet. -->
+  <div id="ca-note" class="note hidden">
+    <strong>Trust the internal CA first.</strong> This page is served over HTTPS
+    by a private certificate authority, so anything that is not a browser you
+    already clicked through — <code>curl</code>, Node, the ACP launcher — will
+    reject the connection until that root certificate is installed on the
+    machine making the request. Install it once per device.
+  </div>
+
+  <!-- The one that needs explaining: the extension is not an HTTP client. -->
+  <h3>VS Code (ACP), from another machine</h3>
+  <p class="muted">
+    The extension never calls this URL itself. It spawns
+    <code>codex-gateway-acp</code> as a child process on the machine your code
+    is on, and <em>that</em> process makes the request. So the checkout, Python
+    and Node all have to exist on your machine — only model traffic crosses the
+    network. <code>127.0.0.1</code> in that context means <em>your</em> machine,
+    which is why the URL below is the one to use, not loopback.
+  </p>
+  <ol>
+    <li>
+      Prerequisites: Python 3.11+, Node.js 20+, VS Code 1.100+. On Windows use
+      WSL or a Dev Container — the launcher is a POSIX entry point.
+    </li>
+    <li>
+      Build the launcher on the machine with your code:
+      <pre id="cmd-launcher"></pre>
+    </li>
+    <li>
+      Package and install the in-repo client, then reload VS Code:
+      <pre id="cmd-vsix"></pre>
+    </li>
+    <li>
+      Point it here, in <strong>user</strong> <code>settings.json</code>.
+      <code>launcherPath</code> must be the absolute path on <em>your</em>
+      machine:
+      <pre id="cmd-settings"></pre>
+      <button onclick="copy($('cmd-settings').textContent, this)">copy settings</button>
+    </li>
+    <li>
+      Open a trusted local folder, click <strong>Codex Gateway</strong> in the
+      Activity Bar, and send a task. If nothing happens, run
+      <strong>Codex Gateway: Show ACP Logs</strong>.
+    </li>
+  </ol>
+
+  <h3>Any OpenAI-compatible client</h3>
+  <pre id="cmd-curl"></pre>
+  <p class="muted">For Bifrost and anything else that takes a provider block:</p>
+  <pre id="cmd-provider"></pre>
+
+  <h3>No VPN? Tunnel instead</h3>
+  <p class="muted">
+    Nothing new is exposed and no certificate is involved — the gateway also
+    listens on the host's loopback:
+  </p>
+  <pre id="cmd-tunnel"></pre>
+</section>
+
+<!-- 4. Detail, for when something looks wrong. -->
 <section>
   <h2>Status</h2>
   <pre id="status">loading…</pre>
@@ -218,10 +300,13 @@ function poll(deviceAuthId, interval) {
 // The other half of "does this work": the provider surface itself. An ordinary
 // OpenAI chat/completions call — no gateway-specific anything, which is the point.
 async function loadModels() {
+  let first = DEFAULT_MODEL;
   try {
     const { data } = await (await fetch("/models")).json();
     $("model").innerHTML = data.map(m => `<option>${m.id}</option>`).join("");
+    if (data?.[0]?.id) first = data[0].id;
   } catch { /* /models is static; a failure here just leaves the list empty */ }
+  renderConnect(first);   // so the snippets name a model this gateway serves
 }
 
 // Streams with `stream: true` and appends each delta as it lands, so the reply
@@ -278,6 +363,62 @@ async function testCompletion() {
   $("send").disabled = false;
 }
 
+// ---------------------------------------------------------------------------
+// Connect section.
+//
+// Everything is derived from the address this page was loaded from. A reader on
+// a VPN name gets that name; a reader on loopback gets loopback. Hardcoding a
+// host here would be wrong for one of them, and this service deliberately does
+// not know its own external name.
+// ---------------------------------------------------------------------------
+const DEFAULT_MODEL = "gpt-5.6-sol";
+const BASE = location.origin + "/v1";
+const LOOPBACK = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(location.hostname);
+
+function renderConnect(model) {
+  $("base-url").textContent = BASE;
+
+  // A private CA is only a problem for callers that did not click through a
+  // browser warning — which is every caller that matters here.
+  $("ca-note").classList.toggle("hidden", !(location.protocol === "https:" && !LOOPBACK));
+
+  $("cmd-launcher").textContent =
+    "git clone <this-repo> codex-gateway && cd codex-gateway\n" +
+    "uv sync --frozen\n" +
+    ".venv/bin/codex-gateway-acp --help";
+
+  $("cmd-vsix").textContent =
+    "cd vscode-extension\n" +
+    "npm test && npm run package\n" +
+    "code --install-extension ./codex-gateway-acp-vscode.vsix --force";
+
+  $("cmd-settings").textContent = JSON.stringify({
+    "codexGateway.launcherPath": "/absolute/path/to/codex-gateway/.venv/bin/codex-gateway-acp",
+    "codexGateway.gatewayUrl": BASE,
+    "codexGateway.model": model,
+    "codexGateway.initialMode": "read-only",
+    "codexGateway.permissionPolicy": "ask",
+  }, null, 2);
+
+  $("cmd-curl").textContent =
+    `curl ${BASE}/chat/completions \\\n` +
+    "  -H 'Content-Type: application/json' \\\n" +
+    `  -d '{"model":"${model}","messages":[{"role":"user","content":"hello"}]}'`;
+
+  $("cmd-provider").textContent =
+    'base_provider_type    = "openai"\n' +
+    "is_key_less           = true\n" +
+    `base_url              = ${location.origin}\n` +
+    "allow_private_network = true";
+
+  // Outside a VPN the port stays on the gateway host's loopback, so the tunnel
+  // is the whole configuration.
+  $("cmd-tunnel").textContent =
+    `ssh -N -L 8085:localhost:8085 ${LOOPBACK ? "user@gateway-host" : location.hostname}\n` +
+    "# then point clients at http://127.0.0.1:8085/v1";
+}
+
+renderConnect(DEFAULT_MODEL);   // render now; loadModels refines the model name
 refreshStatus();
 loadModels();
 </script>

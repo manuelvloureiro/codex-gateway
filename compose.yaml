@@ -28,8 +28,19 @@ services:
       CODEX_ADMIN_TOKEN: ${CODEX_ADMIN_TOKEN:-}
       # 0 stops serving the reference page at /.
       CODEX_UI: ${CODEX_UI:-1}
+      # Where `login --import` looks for the Codex CLI's own store, which is
+      # the mount below rather than a home directory inside the container.
+      CODEX_HOME: /host-codex
     volumes:
       - codex-auth:/data
+      # Read-only view of the host's Codex CLI store, so `login --import` has
+      # something to read. Nothing writes back — the CLI owns that file.
+      #
+      # The CLI writes auth.json 0600, so the import one-shot has to run as
+      # root and hand the result back:
+      #   docker compose run --rm --user root codex-gateway \
+      #     sh -c 'python -m codex_gateway.login --import && chown -R 10004:10004 /data'
+      - ${CODEX_CLI_HOME:-~/.codex}:/host-codex:ro
     # Not unless-stopped: it starts unauthenticated on purpose, so a
     # restart-always policy would fight the login flow.
     restart: on-failure:3
