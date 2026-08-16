@@ -3,10 +3,20 @@
 <title>codex-gateway</title>
 <!--
   Reference UI for the /auth/* API. Deliberately minimal: no framework, no
-  build step, one file. It signs the gateway in and proves it works, and shows
-  the call sequence for wiring this service into a real front end.
+  build step, one file. It signs the gateway in, proves it works, and shows the
+  call sequence for wiring this service into a real front end.
 
-  The whole flow is four fetches:
+  The page is organised by what each block ASKS OF THE READER, because that was
+  the confusing part when everything looked alike:
+
+    .act   something to do here, now, against this gateway (buttons, input)
+    .doc   something to read and copy elsewhere (no state, no side effects)
+
+  Anything that changes the gateway's state lives in .act. Anything in .doc is
+  inert — the only button is "copy". An eyebrow label names the role so it is
+  legible before reading a word of the content.
+
+  The whole auth flow is four fetches:
     GET  /auth/status                      is there a credential?
     POST /auth/login/start                 -> { device_auth_id, user_code, verification_uri, interval }
     POST /auth/login/poll {device_auth_id} -> { status: "pending" | "complete" }   repeat every `interval`
@@ -17,49 +27,112 @@
   and a login they can already perform.
 -->
 <style>
-  :root { color-scheme: light dark; }
-  body { font: 15px/1.6 system-ui, sans-serif; max-width: 36rem; margin: 2.5rem auto; padding: 0 1rem; }
-  h1 { font-size: 1.3rem; margin: 0 0 .2rem; }
-  .sub { opacity: .7; margin: 0 0 1.5rem; font-size: .9rem; }
-  section { border: 1px solid #8883; border-radius: 8px; padding: 1rem; margin-bottom: 1rem; }
-  h2 { font-size: 1rem; margin: 0 0 .7rem; }
-  button { font: inherit; padding: .45rem .9rem; border-radius: 6px; border: 1px solid #8886;
-           background: #8881; color: inherit; cursor: pointer; }
-  button:disabled { opacity: .5; cursor: default; }
-  button.primary { background: #2563eb; color: #fff; border-color: #2563eb; }
-  input, select { font: inherit; padding: .4rem; border-radius: 6px; border: 1px solid #8886;
-                  background: transparent; color: inherit; }
-  input { width: 100%; box-sizing: border-box; }
-  ol { padding-left: 1.2rem; margin: .6rem 0 0; }
-  li { margin-bottom: .9rem; }
-  .code { font: 700 1.9rem/1 ui-monospace, monospace; letter-spacing: .12em;
-          padding: .6rem .8rem; border: 1px dashed #8886; border-radius: 8px;
-          display: inline-block; user-select: all; }
-  pre { background: #8881; padding: .7rem; border-radius: 6px; overflow-x: auto; font-size: .85rem; }
+  :root {
+    color-scheme: light dark;
+    --accent: #2563eb;
+    --ok: #16a34a;
+    --warn: #d97706;
+    --err: #dc2626;
+    --line: #8884;
+    --fill: #8881;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font: 15px/1.6 system-ui, -apple-system, sans-serif;
+    max-width: 42rem; margin: 2.5rem auto 5rem; padding: 0 1.25rem;
+  }
+
+  /* ── header ─────────────────────────────────────────────────────────── */
+  h1 { font-size: 1.35rem; margin: 0 0 .15rem; letter-spacing: -.01em; }
+  .sub { opacity: .65; margin: 0; font-size: .9rem; }
+  .pill {
+    display: inline-block; margin-top: .8rem; font-size: .78rem; font-weight: 600;
+    padding: .15rem .6rem; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--fill);
+  }
+  .pill.on  { color: var(--ok);   border-color: #16a34a55; }
+  .pill.off { color: var(--warn); border-color: #d9770655; }
+
+  /* ── the two block roles ────────────────────────────────────────────── */
+  section { border-radius: 10px; padding: 1.05rem 1.15rem; margin: 0 0 1rem; }
+  section.act { border: 1px solid var(--line); }
+  section.doc { border: 1px solid transparent; border-left: 3px solid var(--line);
+                background: var(--fill); border-radius: 0 10px 10px 0; }
+
+  .eyebrow {
+    font-size: .67rem; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .1em; opacity: .5; margin: 0 0 .3rem;
+  }
+  h2 { font-size: 1.02rem; margin: 0 0 .15rem; }
+  .lede { margin: .1rem 0 .9rem; font-size: .9rem; opacity: .7; }
+
+  /* ── controls: only ever inside .act, except .ghost ─────────────────── */
+  button {
+    font: inherit; padding: .42rem .85rem; border-radius: 6px;
+    border: 1px solid #8886; background: var(--fill); color: inherit; cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: #8889; }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button.ghost { font-size: .78rem; padding: .18rem .5rem; opacity: .75; background: none; }
+  input, select {
+    font: inherit; padding: .4rem .5rem; border-radius: 6px;
+    border: 1px solid #8886; background: transparent; color: inherit;
+  }
+  input { width: 100%; }
+
+  /* ── shared bits ────────────────────────────────────────────────────── */
   .row { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
   .hidden { display: none; }
-  .err { color: #dc2626; }
-  .ok { color: #16a34a; }
-  .muted { opacity: .7; font-size: .9rem; }
-  h3 { font-size: .95rem; margin: 1.4rem 0 .5rem; }
-  h3:first-of-type { margin-top: .8rem; }
-  .mono { font-family: ui-monospace, monospace; font-size: .9rem;
-          padding: .3rem .5rem; border: 1px dashed #8886; border-radius: 6px;
-          display: inline-block; user-select: all; word-break: break-all; }
-  .note { border-left: 3px solid #f59e0b; padding: .1rem 0 .1rem .7rem; margin: .8rem 0;
-          font-size: .9rem; }
+  .err { color: var(--err); }
+  .ok { color: var(--ok); }
+  .muted { opacity: .65; font-size: .88rem; }
+  ol { padding-left: 1.15rem; margin: .5rem 0 0; }
+  li { margin-bottom: .8rem; }
+  pre {
+    background: #8881; border: 1px solid #8882; padding: .65rem .75rem;
+    border-radius: 6px; overflow-x: auto; font-size: .84rem; margin: .5rem 0 0;
+  }
+  section.doc pre { background: #8882; }
   code { font-family: ui-monospace, monospace; font-size: .9em; }
+  .mono {
+    font-family: ui-monospace, monospace; font-size: .9rem; padding: .3rem .55rem;
+    border: 1px solid #8886; border-radius: 6px; background: #8881;
+    display: inline-block; user-select: all; word-break: break-all;
+  }
+  .devicecode {
+    font: 700 1.8rem/1 ui-monospace, monospace; letter-spacing: .12em;
+    padding: .55rem .75rem; border: 1px dashed #8886; border-radius: 8px;
+    display: inline-block; user-select: all;
+  }
+  .note { border-left: 3px solid var(--warn); padding: .15rem 0 .15rem .7rem;
+          margin: .85rem 0 0; font-size: .88rem; }
+
+  /* Collapsed by default: three client recipes, only one of which is yours. */
+  details { border-top: 1px solid #8883; padding: .55rem 0 .2rem; }
+  details[open] { padding-bottom: .8rem; }
+  summary { cursor: pointer; font-weight: 600; font-size: .92rem; padding: .15rem 0; }
+  summary::marker { color: #8888; }
+
+  details.diag { border: 1px solid var(--line); border-radius: 10px; padding: .6rem 1.15rem; }
+  details.diag[open] { padding-bottom: 1rem; }
 </style>
 
-<h1>codex-gateway</h1>
-<p class="sub">ChatGPT subscription → OpenAI-compatible endpoint</p>
+<header>
+  <h1>codex-gateway</h1>
+  <p class="sub">ChatGPT subscription → OpenAI-compatible endpoint</p>
+  <span class="pill" id="pill">checking…</span>
+</header>
 
-<!-- 1. Sign in. First on the page, because it is the first thing to do. -->
-<section>
+<!-- ══ 1. CREDENTIAL — the only block that owns login state. ═══════════════ -->
+<section class="act">
+  <p class="eyebrow">Credential</p>
   <h2>Sign in</h2>
+  <p class="lede">One login per gateway. Tokens are stored in the container's
+    <code>/data</code> volume and refresh on their own.</p>
 
   <div id="signed-in" class="hidden">
-    <p class="ok">Signed in as <strong id="acct"></strong>.</p>
+    <p class="ok" style="margin:.2rem 0 .7rem">Signed in as <strong id="acct"></strong>.</p>
     <div class="row">
       <button onclick="call('/auth/refresh')">refresh token</button>
       <button onclick="call('/auth/logout')">log out</button>
@@ -78,14 +151,14 @@
           Open this page, on any device:
           <div class="row" style="margin-top:.4rem">
             <a id="url" target="_blank" rel="noopener"></a>
-            <button onclick="copy($('url').textContent, this)">copy link</button>
+            <button class="ghost" onclick="copy($('url').textContent, this)">copy link</button>
           </div>
         </li>
         <li>
           Enter this code there:
           <div class="row" style="margin-top:.4rem">
-            <span class="code" id="code"></span>
-            <button onclick="copy($('code').textContent, this)">copy code</button>
+            <span class="devicecode" id="code"></span>
+            <button class="ghost" onclick="copy($('code').textContent, this)">copy code</button>
           </div>
         </li>
         <li id="wait" class="muted">Waiting for approval — this page picks it up on its own.</li>
@@ -94,9 +167,13 @@
   </div>
 </section>
 
-<!-- 2. Prove it actually works. -->
-<section>
+<!-- ══ 2. INTERACTIVE — spends real quota, so it says so. ═════════════════ -->
+<section class="act">
+  <p class="eyebrow">Interactive</p>
   <h2>Send a test message</h2>
+  <p class="lede">A plain OpenAI <code>chat/completions</code> call against this
+    gateway — nothing gateway-specific, which is the point. Uses your real
+    subscription quota.</p>
   <div class="row">
     <select id="model"></select>
     <button id="send" onclick="testCompletion()">send</button>
@@ -105,97 +182,97 @@
   <pre id="reply" class="hidden"></pre>
 </section>
 
-<!-- 3. Connect something real to it. Every URL below is derived from
-     location.origin rather than hardcoded, so the page tells each visitor the
-     address that actually works for them — loopback, a VPN name, whatever they
-     browsed in on. Nothing here is host-specific. -->
-<section>
-  <h2>Connect</h2>
+<!-- ══ 3. REFERENCE — inert. Read it, copy it, use it somewhere else. ═════
+     Every URL is derived from location.origin rather than hardcoded, so the
+     page states the address that works for whoever is reading. This service
+     deliberately does not know its own external name. -->
+<section class="doc">
+  <p class="eyebrow">Reference — nothing here changes anything</p>
+  <h2>Connect a client</h2>
+  <p class="lede">No API key. This gateway holds the credential, so register it
+    keyless.</p>
 
-  <p class="muted">Base URL for any OpenAI-compatible client. No API key — this
-  gateway holds the credential, so register it keyless.</p>
   <div class="row">
     <span class="mono" id="base-url"></span>
-    <button onclick="copy($('base-url').textContent, this)">copy</button>
+    <button class="ghost" onclick="copy($('base-url').textContent, this)">copy</button>
   </div>
 
-  <!-- Only when reached over https on a name other than loopback: the cert
-       comes from a private CA the client has no reason to trust yet. -->
+  <!-- Only when reached over https on something other than loopback: the cert
+       comes from a private CA the caller has no reason to trust yet. -->
   <div id="ca-note" class="note hidden">
     <strong>Trust the internal CA first.</strong> This page is served over HTTPS
-    by a private certificate authority, so anything that is not a browser you
+    by a private certificate authority. Anything that is not a browser you
     already clicked through — <code>curl</code>, Node, the ACP launcher — will
-    reject the connection until that root certificate is installed on the
-    machine making the request. Install it once per device.
+    refuse the connection until that root certificate is installed on the
+    machine making the request. Once per device.
   </div>
 
-  <!-- The one that needs explaining: the extension is not an HTTP client. -->
-  <h3>VS Code (ACP), from another machine</h3>
-  <p class="muted">
-    The extension never calls this URL itself. It spawns
-    <code>codex-gateway-acp</code> as a child process on the machine your code
-    is on, and <em>that</em> process makes the request. So the checkout, Python
-    and Node all have to exist on your machine — only model traffic crosses the
-    network. <code>127.0.0.1</code> in that context means <em>your</em> machine,
-    which is why the URL below is the one to use, not loopback.
-  </p>
-  <ol>
-    <li>
-      Prerequisites: Python 3.11+, Node.js 20+, VS Code 1.100+. On Windows use
-      WSL or a Dev Container — the launcher is a POSIX entry point.
-    </li>
-    <li>
-      Build the launcher on the machine with your code:
-      <pre id="cmd-launcher"></pre>
-    </li>
-    <li>
-      Package and install the in-repo client, then reload VS Code:
-      <pre id="cmd-vsix"></pre>
-    </li>
-    <li>
-      Point it here, in <strong>user</strong> <code>settings.json</code>.
-      <code>launcherPath</code> must be the absolute path on <em>your</em>
-      machine:
-      <pre id="cmd-settings"></pre>
-      <button onclick="copy($('cmd-settings').textContent, this)">copy settings</button>
-    </li>
-    <li>
-      Open a trusted local folder, click <strong>Codex Gateway</strong> in the
-      Activity Bar, and send a task. If nothing happens, run
-      <strong>Codex Gateway: Show ACP Logs</strong>.
-    </li>
-  </ol>
+  <details open>
+    <summary>VS Code, across the network</summary>
+    <p class="muted" style="margin-top:.5rem">
+      The extension is <strong>not</strong> an HTTP client. It spawns
+      <code>codex-gateway-acp</code> as a child process on the machine your code
+      is on, and <em>that</em> process makes the request. The checkout, Python
+      and Node all live on your machine; only model traffic crosses the network.
+      So <code>127.0.0.1</code> there means <em>your</em> machine — use the
+      address above instead.
+    </p>
+    <ol>
+      <li>Python 3.11+, Node.js 20+, VS Code 1.100+. On Windows use WSL or a Dev
+        Container; the launcher is a POSIX entry point.</li>
+      <li>Build the launcher where your code is:
+        <pre id="cmd-launcher"></pre>
+      </li>
+      <li>Package and install the in-repo client, then reload VS Code:
+        <pre id="cmd-vsix"></pre>
+      </li>
+      <li>Point it here, in user <code>settings.json</code>.
+        <code>launcherPath</code> is the absolute path on <em>your</em> machine:
+        <pre id="cmd-settings"></pre>
+        <div class="row" style="margin-top:.4rem">
+          <button class="ghost" onclick="copy($('cmd-settings').textContent, this)">copy settings</button>
+        </div>
+      </li>
+      <li>Open a trusted local folder, click <strong>Codex Gateway</strong> in
+        the Activity Bar, send a task. If nothing happens, run
+        <strong>Codex Gateway: Show ACP Logs</strong>.</li>
+    </ol>
+  </details>
 
-  <h3>Any OpenAI-compatible client</h3>
-  <pre id="cmd-curl"></pre>
-  <p class="muted">For Bifrost and anything else that takes a provider block:</p>
-  <pre id="cmd-provider"></pre>
+  <details>
+    <summary>Any OpenAI-compatible client</summary>
+    <pre id="cmd-curl"></pre>
+    <p class="muted" style="margin-top:.7rem">For Bifrost, or anything else that
+      takes a provider block:</p>
+    <pre id="cmd-provider"></pre>
+  </details>
 
-  <h3>No VPN? Tunnel instead</h3>
-  <p class="muted">
-    Nothing new is exposed and no certificate is involved — the gateway also
-    listens on the host's loopback:
-  </p>
-  <pre id="cmd-tunnel"></pre>
+  <details>
+    <summary>Off the network? Tunnel instead</summary>
+    <p class="muted" style="margin-top:.5rem">The gateway also listens on the
+      host's loopback. Nothing new is exposed and no certificate is involved:</p>
+    <pre id="cmd-tunnel"></pre>
+  </details>
 </section>
 
-<!-- 4. Detail, for when something looks wrong. -->
-<section>
-  <h2>Status</h2>
+<!-- ══ 4. DIAGNOSTICS — collapsed; you want it only when something is off. ═ -->
+<details class="diag">
+  <summary>Diagnostics</summary>
   <pre id="status">loading…</pre>
   <button onclick="refreshStatus()">refresh</button>
-</section>
+</details>
 
-<!-- Only appears if the server answers 403. -->
-<section id="admin" class="hidden">
+<!-- Appears only if the server actually answers 403. -->
+<section class="act hidden" id="admin" style="margin-top:1rem">
+  <p class="eyebrow">Credential</p>
   <h2>Admin token required</h2>
-  <p class="muted">
+  <p class="lede">
     This gateway was started with <code>CODEX_ADMIN_TOKEN</code> set, so the
     sign-in routes ask for it. It stops others who can reach this port from
-    signing you out or hijacking a login.
+    signing you out or hijacking a login. It does <em>not</em> gate model use.
   </p>
   <input id="token" type="password" placeholder="paste CODEX_ADMIN_TOKEN">
-  <p><button onclick="retryAfterToken()">continue</button></p>
+  <p style="margin-bottom:0"><button onclick="retryAfterToken()">continue</button></p>
 </section>
 
 <p id="error" class="err"></p>
@@ -243,6 +320,14 @@ async function copy(text, btn) {
   } catch { /* clipboard needs https or localhost; the text is select-all anyway */ }
 }
 
+// One line at the top answering "is this thing usable right now", so the
+// answer does not depend on reading the diagnostics block.
+function setPill(state, text) {
+  const pill = $("pill");
+  pill.textContent = text;
+  pill.className = "pill" + (state ? " " + state : "");
+}
+
 async function refreshStatus() {
   $("error").textContent = "";
   try {
@@ -251,9 +336,12 @@ async function refreshStatus() {
     $("signed-in").classList.toggle("hidden", !status.authenticated);
     $("signed-out").classList.toggle("hidden", !!status.authenticated);
     $("acct").textContent = status.account_id || "unknown account";
+    setPill(status.authenticated ? "on" : "off",
+            status.authenticated ? "ready — signed in" : "not signed in");
   } catch (err) {
     fail(err);
     $("status").textContent = "unavailable";
+    setPill("off", "unavailable");
   }
 }
 
@@ -297,8 +385,7 @@ function poll(deviceAuthId, interval) {
   }, Math.max(1, interval || 5) * 1000);
 }
 
-// The other half of "does this work": the provider surface itself. An ordinary
-// OpenAI chat/completions call — no gateway-specific anything, which is the point.
+// The other half of "does this work": the provider surface itself.
 async function loadModels() {
   let first = DEFAULT_MODEL;
   try {
@@ -364,12 +451,12 @@ async function testCompletion() {
 }
 
 // ---------------------------------------------------------------------------
-// Connect section.
+// Reference block.
 //
 // Everything is derived from the address this page was loaded from. A reader on
 // a VPN name gets that name; a reader on loopback gets loopback. Hardcoding a
-// host here would be wrong for one of them, and this service deliberately does
-// not know its own external name.
+// host would be wrong for one of them, and this service deliberately does not
+// know its own external name.
 // ---------------------------------------------------------------------------
 const DEFAULT_MODEL = "gpt-5.6-sol";
 const BASE = location.origin + "/v1";
@@ -411,8 +498,8 @@ function renderConnect(model) {
     `base_url              = ${location.origin}\n` +
     "allow_private_network = true";
 
-  // Outside a VPN the port stays on the gateway host's loopback, so the tunnel
-  // is the whole configuration.
+  // Outside a private network the port stays on the gateway host's loopback,
+  // so the tunnel is the whole configuration.
   $("cmd-tunnel").textContent =
     `ssh -N -L 8085:localhost:8085 ${LOOPBACK ? "user@gateway-host" : location.hostname}\n` +
     "# then point clients at http://127.0.0.1:8085/v1";
