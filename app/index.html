@@ -118,16 +118,29 @@
   .note { border-left: 3px solid var(--warn); padding: .15rem 0 .15rem .7rem;
           margin: .85rem 0 0; font-size: .88rem; }
 
-  /* Collapsed by default: three client recipes, only one of which is yours. */
-  details { border-top: 1px solid #8883; padding: .55rem 0 .2rem; }
-  details[open] { padding-bottom: .8rem; }
-  summary { cursor: pointer; font-weight: 600; font-size: .92rem; padding: .15rem 0; }
-  summary::marker { color: #8888; }
+  /* The reference lane is a LIST OF ALTERNATIVES, so every entry is one
+     uniform row: name on the left, who-it-is-for on the right, closed until
+     asked. Scanning five rows beats scrolling five expanded recipes. */
+  details { border-bottom: 1px solid #8883; }
+  details:last-of-type { border-bottom: 0; }
+  summary {
+    display: flex; gap: 1rem; justify-content: space-between; align-items: baseline;
+    cursor: pointer; padding: .62rem .1rem; font-weight: 600; font-size: .93rem;
+    list-style: none;
+  }
+  summary::-webkit-details-marker { display: none; }
+  summary::after { content: "›"; opacity: .35; font-size: 1.15rem; line-height: 1;
+                   transition: transform .15s ease; }
+  details[open] > summary::after { transform: rotate(90deg); }
   summary:hover { color: var(--accent); }
-  /* The recipes are alternatives, so each one says who it is for on its row —
-     the reader picks without opening all four. */
-  .hint { font-weight: 400; opacity: .55; font-size: .84rem; margin-left: .5rem; }
-  .pick { font-size: .84rem; opacity: .55; margin: 1rem 0 .1rem; }
+  summary:hover::after { opacity: .7; }
+  details > :not(summary) { margin-left: .1rem; }
+  details[open] { padding-bottom: .9rem; }
+  .hint { font-weight: 400; opacity: .5; font-size: .82rem; text-align: right;
+          margin-left: auto; padding-right: .6rem; }
+  .fieldlabel { font-size: .72rem; text-transform: uppercase; letter-spacing: .08em;
+                opacity: .5; font-weight: 700; margin: 0 0 .3rem; }
+  .pick { font-size: .82rem; opacity: .5; margin: 1.1rem 0 .1rem; }
 
   details.diag { border: 1px solid var(--line); border-radius: 10px; padding: .6rem 1.15rem; }
   details.diag[open] { padding-bottom: 1rem; }
@@ -225,37 +238,40 @@
      page states the address that works for whoever is reading. This service
      deliberately does not know its own external name. -->
 <section class="doc">
-  <p class="eyebrow">Reference — nothing here changes anything</p>
+  <p class="eyebrow">Reference</p>
   <h2>Connect a client</h2>
-  <p class="lede">No API key. This gateway holds the credential, so register it
-    keyless.</p>
 
+  <p class="fieldlabel">Base URL · no API key</p>
   <div class="row">
     <span class="mono" id="base-url"></span>
     <button class="ghost" onclick="copy($('base-url').textContent, this)">copy</button>
   </div>
 
-  <!-- Only when reached over https on something other than loopback: the cert
-       comes from a private CA the caller has no reason to trust yet. -->
-  <div id="ca-note" class="note hidden">
-    <strong>Trust the internal CA first.</strong> This page is served over HTTPS
-    by a private certificate authority. Anything that is not a browser you
-    already clicked through — <code>curl</code>, Node, the ACP launcher — will
-    refuse the connection until that root certificate is installed on the
-    machine making the request. Once per device.
+  <p class="pick">Pick one — these are alternatives, not steps.</p>
 
-    <!-- Shown only if /ca.crt actually answers. No browser lets a page install
-         a root certificate — that is the whole point of a trust store — so the
-         download plus the right command is as automated as this can get. -->
-    <div id="ca-install" class="hidden" style="margin-top:.7rem">
+  <!-- A row like any other, rather than a banner: it applies to one reader in
+       three and expanding it by default was most of the wall of text. Shown
+       only when this page came over https on something other than loopback. -->
+  <details id="ca-note" class="hidden">
+    <summary>Install the private CA<span class="hint">once per device</span></summary>
+    <p class="muted" style="margin-top:.4rem">
+      HTTPS here is issued by a private authority. A browser can be clicked
+      through; <code>curl</code>, Node and the ACP launcher cannot — they refuse
+      until the root is installed. <strong>Installing into the OS store is not
+      always enough:</strong> Firefox always, and Chrome on Linux, keep their
+      own trust store and ignore the system one.
+    </p>
+    <div id="ca-install" class="hidden" style="margin-top:.6rem">
       <div class="row">
         <a id="ca-dl" href="/ca.crt" download="codex-gateway-root.crt">
           <button class="ghost">download certificate</button>
         </a>
         <select id="ca-os" onchange="renderCaCommand()">
-          <option value="linux">Linux</option>
-          <option value="mac">macOS</option>
           <option value="win">Windows</option>
+          <option value="mac">macOS</option>
+          <option value="linux">Linux · system store</option>
+          <option value="nss">Linux · Chrome/Chromium</option>
+          <option value="firefox">Firefox · any OS</option>
         </select>
       </div>
       <pre id="cmd-ca"></pre>
@@ -263,9 +279,7 @@
         <button class="ghost" onclick="copy($('cmd-ca').textContent, this)">copy</button>
       </div>
     </div>
-  </div>
-
-  <p class="pick">Pick one — they are alternatives, not steps.</p>
+  </details>
 
   <details>
     <summary>VS Code<span class="hint">the ACP extension, four steps</span></summary>
@@ -558,16 +572,36 @@ function renderConnect(model) {
 function renderCaCommand() {
   const url = location.origin + "/ca.crt";
   const cmds = {
-    linux:
-      `curl -fsSk ${url} | sudo tee /usr/local/share/ca-certificates/codex-gateway-root.crt >/dev/null\n` +
-      "sudo update-ca-certificates",
+    // -user writes the current account's Root store, so no Administrator shell
+    // is needed. Nothing may follow the filename: PowerShell has no `::`
+    // comment, so a trailing note becomes two more arguments and certutil
+    // rejects the whole line.
+    win:
+      `curl.exe -fsSk ${url} -o codex-gateway-root.crt\n` +
+      "certutil -user -f -addstore Root codex-gateway-root.crt",
     mac:
       `curl -fsSk ${url} -o codex-gateway-root.crt\n` +
       "sudo security add-trusted-cert -d -r trustRoot \\\n" +
       "  -k /Library/Keychains/System.keychain codex-gateway-root.crt",
-    win:
-      `curl.exe -fsSk ${url} -o codex-gateway-root.crt\n` +
-      "certutil -addstore -f Root codex-gateway-root.crt   :: run as Administrator",
+    linux:
+      `curl -fsSk ${url} | sudo tee /usr/local/share/ca-certificates/codex-gateway-root.crt >/dev/null\n` +
+      "sudo update-ca-certificates",
+    // Chrome and Chromium on Linux read NSS, never /etc/ssl.
+    nss:
+      `curl -fsSk ${url} -o codex-gateway-root.crt\n` +
+      "certutil -d sql:$HOME/.pki/nssdb -A -t 'C,,' \\\n" +
+      "  -n codex-gateway -i codex-gateway-root.crt\n" +
+      "# certutil comes from libnss3-tools",
+    // Firefox ships its own root list on every platform. One pref makes it
+    // additionally honour the OS store, which is less work than importing.
+    firefox:
+      "Firefox ignores the operating system trust store.\n\n" +
+      "  about:config\n" +
+      "  security.enterprise_roots.enabled = true\n" +
+      "  restart Firefox\n\n" +
+      "Or import it by hand:\n" +
+      "  Settings -> Privacy & Security -> Certificates ->\n" +
+      "  View Certificates -> Authorities -> Import",
   };
   $("cmd-ca").textContent = cmds[$("ca-os").value] || cmds.linux;
 }
