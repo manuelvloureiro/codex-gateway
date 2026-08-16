@@ -287,6 +287,23 @@ path for offline or tightly controlled environments.
   extension and launcher in WSL or a Dev Container so the POSIX entry point and
   workspace paths are used.
 
+**Windows via WSL** deserves its own list, because each of these looks like it
+should already work:
+
+- Keep the checkout, `uv`, Node and the launcher **inside the distro**.
+  `codexGateway.launcherPath` is the WSL path; a Windows-side checkout cannot
+  run a POSIX entry point.
+- `code --install-extension` inside WSL needs `wget` present, or it packages the
+  VSIX successfully and then fails with *"Failed to download the VS Code
+  server"*: `sudo apt-get update && sudo apt-get install -y wget`. The GUI route
+  avoids it entirely — **Ctrl+Shift+P → Extensions: Install from VSIX…** with
+  the WSL window focused installs to the WSL side.
+- **WSL does not inherit Windows' VPN resolver.** A private name resolves in the
+  browser and not in the distro, so the launcher cannot reach the gateway even
+  though the same URL works on the host. Add the host to `/etc/hosts` in the
+  distro, or set `[network] generateResolvConf = false` in `/etc/wsl.conf` and
+  point `/etc/resolv.conf` at the VPN's DNS server.
+
 ### ACP troubleshooting
 
 - **Gateway health is 503:** finish the gateway's device-code login; the ACP

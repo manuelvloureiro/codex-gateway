@@ -309,6 +309,31 @@
     </ol>
   </details>
 
+  <!-- WSL is its own machine wearing Windows' clothes: separate filesystem,
+       separate resolver, separate VS Code server. Every step below is a thing
+       that looks like it should already work and does not. -->
+  <details>
+    <summary>Windows · WSL<span class="hint">three traps, all avoidable</span></summary>
+    <ol style="margin-top:.5rem">
+      <li><strong>Everything lives in WSL</strong> — checkout, <code>uv</code>,
+        Node, launcher. The launcher is a POSIX entry point; a Windows-side
+        checkout cannot run it, and <code>launcherPath</code> must be the WSL
+        path.</li>
+      <li><strong><code>code --install-extension</code> needs wget</strong> in
+        the distro, or it dies with <em>"Failed to download the VS Code
+        server"</em> after packaging the VSIX perfectly well:
+        <pre>sudo apt-get update &amp;&amp; sudo apt-get install -y wget</pre>
+        Or skip the CLI: <strong>Ctrl+Shift+P → Extensions: Install from
+        VSIX…</strong> with the WSL window focused installs it to the right
+        side by itself.</li>
+      <li><strong>WSL does not inherit Windows' VPN resolver.</strong> The name
+        resolves in your browser and not in the distro, so the launcher cannot
+        reach the gateway. Point it at the host:
+        <pre id="cmd-wsl-hosts"></pre>
+      </li>
+    </ol>
+  </details>
+
   <details>
     <summary>curl<span class="hint">check it from a shell</span></summary>
     <pre id="cmd-curl"></pre>
@@ -551,6 +576,13 @@ function renderConnect(model) {
     `curl ${BASE}/chat/completions \\\n` +
     "  -H 'Content-Type: application/json' \\\n" +
     `  -d '{"model":"${model}","messages":[{"role":"user","content":"hello"}]}'`;
+
+  // The page knows the name it was reached by but not the address behind it,
+  // so the IP stays a placeholder rather than a guess.
+  $("cmd-wsl-hosts").textContent =
+    `echo "<gateway-ip>  ${LOOPBACK ? "<gateway-name>" : location.hostname}" | sudo tee -a /etc/hosts\n` +
+    "# then, from the distro:\n" +
+    `curl ${LOOPBACK ? "http://<gateway-name>" : location.origin}/health`;
 
   $("cmd-provider").textContent =
     'base_provider_type    = "openai"\n' +
