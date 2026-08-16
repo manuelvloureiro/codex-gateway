@@ -394,8 +394,13 @@ async def handle_index(_request: web.Request) -> web.Response:
     if os.getenv("CODEX_UI", "1") == "0":
         return _error("reference UI is disabled (CODEX_UI=0)", 404, "ui_disabled")
     try:
+        # no-store: the page is re-read from disk on every request, so a cached
+        # copy in the browser silently hides an edit to app/index.html. With no
+        # cache header at all, browsers cache HTML heuristically and a deployed
+        # change looks like it never shipped.
         return web.Response(text=login_page().read_text(encoding="utf-8"),
-                            content_type="text/html")
+                            content_type="text/html",
+                            headers={"Cache-Control": "no-store"})
     except OSError:
         return _error(f"reference UI not found at {login_page()}", 404, "ui_missing")
 

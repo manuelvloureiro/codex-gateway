@@ -39,8 +39,18 @@
   * { box-sizing: border-box; }
   body {
     font: 15px/1.6 system-ui, -apple-system, sans-serif;
-    max-width: 42rem; margin: 2.5rem auto 5rem; padding: 0 1.25rem;
+    max-width: 78rem; margin: 2.5rem auto 5rem; padding: 0 1.5rem;
   }
+
+  /* Two lanes, and the split IS the point: everything you DO on the left,
+     everything you READ and copy elsewhere on the right. On a narrow screen
+     they stack, do-first — which is also the reading order without CSS. */
+  main {
+    display: grid; gap: 1.25rem; align-items: start;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.08fr);
+  }
+  @media (max-width: 64rem) { main { grid-template-columns: minmax(0, 1fr); } }
+  .lane { min-width: 0; }
 
   /* ── header ─────────────────────────────────────────────────────────── */
   h1 { font-size: 1.35rem; margin: 0 0 .15rem; letter-spacing: -.01em; }
@@ -124,6 +134,9 @@
   <span class="pill" id="pill">checking…</span>
 </header>
 
+<main>
+<div class="lane"><!-- ── things you do ──────────────────────────────────── -->
+
 <!-- ══ 1. CREDENTIAL — the only block that owns login state. ═══════════════ -->
 <section class="act">
   <p class="eyebrow">Credential</p>
@@ -181,6 +194,26 @@
   <input id="prompt" value="Say hello in five words." style="margin-top:.5rem">
   <pre id="reply" class="hidden"></pre>
 </section>
+
+<!-- Appears only if the server actually answers 403. Lives in the act lane
+     because it is a credential prompt, not documentation. -->
+<section class="act hidden" id="admin">
+  <p class="eyebrow">Credential</p>
+  <h2>Admin token required</h2>
+  <p class="lede">
+    This gateway was started with <code>CODEX_ADMIN_TOKEN</code> set, so the
+    sign-in routes ask for it. It stops others who can reach this port from
+    signing you out or hijacking a login. It does <em>not</em> gate model use.
+  </p>
+  <input id="token" type="password" placeholder="paste CODEX_ADMIN_TOKEN">
+  <p style="margin-bottom:0"><button onclick="retryAfterToken()">continue</button></p>
+</section>
+
+<p id="error" class="err"></p>
+
+</div><!-- ── /things you do ───────────────────────────────────────────── -->
+
+<div class="lane"><!-- ── things you read ────────────────────────────────── -->
 
 <!-- ══ 3. REFERENCE — inert. Read it, copy it, use it somewhere else. ═════
      Every URL is derived from location.origin rather than hardcoded, so the
@@ -262,20 +295,8 @@
   <button onclick="refreshStatus()">refresh</button>
 </details>
 
-<!-- Appears only if the server actually answers 403. -->
-<section class="act hidden" id="admin" style="margin-top:1rem">
-  <p class="eyebrow">Credential</p>
-  <h2>Admin token required</h2>
-  <p class="lede">
-    This gateway was started with <code>CODEX_ADMIN_TOKEN</code> set, so the
-    sign-in routes ask for it. It stops others who can reach this port from
-    signing you out or hijacking a login. It does <em>not</em> gate model use.
-  </p>
-  <input id="token" type="password" placeholder="paste CODEX_ADMIN_TOKEN">
-  <p style="margin-bottom:0"><button onclick="retryAfterToken()">continue</button></p>
-</section>
-
-<p id="error" class="err"></p>
+</div><!-- ── /things you read ─────────────────────────────────────────── -->
+</main>
 
 <script>
 const $ = id => document.getElementById(id);
