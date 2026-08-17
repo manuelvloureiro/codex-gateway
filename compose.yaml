@@ -8,6 +8,10 @@ name: codex-gateway
 #   docker compose up -d codex-gateway && open http://localhost:8085/
 services:
   codex-gateway:
+    # Python runs as PID 1 here and never reaps the children Docker's
+    # HEALTHCHECK spawns, so every probe leaked a zombie and the count grew
+    # without bound (80 by 2026-08-16). docker-init reaps them instead.
+    init: true
     build:
       context: .
       dockerfile: Dockerfile
