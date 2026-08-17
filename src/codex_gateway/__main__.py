@@ -1,4 +1,4 @@
-"""``python -m codex_gateway`` — run the gateway or its ACP launcher."""
+"""``python -m codex_gateway`` — run the HTTP gateway."""
 
 from __future__ import annotations
 
@@ -6,9 +6,7 @@ import sys
 
 from .server import run
 
-USAGE = """usage: codex-gateway [--port PORT] | codex-gateway acp
-
-Run the HTTP gateway by default, or run its stdio ACP launcher with `acp`.
+USAGE = """usage: codex-gateway [--port PORT]
 
   --port PORT   listen port (default: $CODEX_GATEWAY_PORT, else 8085)
 """
@@ -39,10 +37,6 @@ def main(argv: list[str] | None = None) -> int:
     if args in (["-h"], ["--help"]):
         print(USAGE, end="")
         return 0
-    if args and args[0] == "acp":
-        from .acp import main as acp_main
-
-        return acp_main(args[1:])
     try:
         port = _parse_port(args)
     except ValueError as exc:

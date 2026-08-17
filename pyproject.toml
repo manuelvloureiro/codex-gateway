@@ -11,7 +11,6 @@ dependencies = ["aiohttp>=3.10,<4"]
 [project.scripts]
 codex-gateway = "codex_gateway.__main__:main"
 codex-gateway-login = "codex_gateway.login:main"
-codex-gateway-acp = "codex_gateway.acp:main"
 
 [dependency-groups]
 dev = ["pytest>=8", "pytest-asyncio>=0.24"]
