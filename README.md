@@ -183,6 +183,9 @@ The two equivalent launcher commands are:
 .venv/bin/codex-gateway acp
 ```
 
+On Windows, use `.venv\Scripts\codex-gateway-acp.exe` and
+`.venv\Scripts\codex-gateway.exe acp`.
+
 They are stdio servers and will wait silently for an ACP client when started
 by hand. Human-readable diagnostics go to stderr; stdout is reserved for ACP
 JSON-RPC.
@@ -220,7 +223,9 @@ Code's user `settings.json`. The remaining values below are secure defaults:
 
 If the adapter was preinstalled, also set `codexGateway.adapterPath` to the
 absolute path printed by `command -v codex-acp`. Otherwise the launcher uses
-its pinned `npx` package.
+its pinned `npx` package. On Windows, `npm install -g` installs a
+`codex-acp.cmd` file, not a program file. Use that file, or the `dist\index.js`
+file in the package. The launcher starts a `.js` file with `node`.
 
 ### 3. Work with it
 
@@ -254,8 +259,8 @@ is never required. Authentication still happens only in `codex-gateway`.
 | --- | --- | --- |
 | `CODEX_GATEWAY_URL` | `http://127.0.0.1:8085/v1` | Gateway base URL visible from the ACP process. Codex appends `/responses`. |
 | `CODEX_GATEWAY_MODEL` | first `CODEX_MODELS` entry, then `gpt-5.6-sol` | Initial Codex model. |
-| `CODEX_ACP_BIN` | *(unset)* | Explicit adapter executable. If unset, the launcher uses pinned `npx`. |
-| `CODEX_ACP_PACKAGE` | `@agentclientprotocol/codex-acp@1.1.9` | Package used by `npx`. Override only to test a deliberate adapter version. |
+| `CODEX_ACP_BIN` | *(unset)* | Explicit adapter executable, or a `.js` entry point to run through `node`. If unset, the launcher uses pinned `npx`. |
+| `CODEX_ACP_PACKAGE` | `@agentclientprotocol/codex-acp@1.1.9` | Package used by `npx`, as an exact `name@version`. Override only to test a deliberate adapter version. |
 | `CODEX_CONFIG` | `{}` | Extra Codex JSON configuration to merge before gateway fields are enforced. |
 | `INITIAL_AGENT_MODE` | adapter default | `read-only`, `agent`, or `agent-full-access`. Start with `read-only`. |
 
@@ -283,26 +288,122 @@ path for offline or tightly controlled environments.
 - Prompts, selected workspace context, tool results, and permitted command/file
   operations pass through Codex App Server to the remote ChatGPT/Codex backend.
   The local extension does not make the model interaction offline or private.
-- The launcher is currently supported on Linux and macOS. On Windows, run the
-  extension and launcher in WSL or a Dev Container so the POSIX entry point and
-  workspace paths are used.
+- A repository on the Windows file system has no boundary. Use the procedure in
+  the next section. WSL and Dev Containers are boundaries: install the launcher
+  on the side that holds the code.
 
-**Windows via WSL** deserves its own list, because each of these looks like it
-should already work:
+### Windows
 
-- Keep the checkout, `uv`, Node and the launcher **inside the distro**.
-  `codexGateway.launcherPath` is the WSL path; a Windows-side checkout cannot
-  run a POSIX entry point.
-- `code --install-extension` inside WSL needs `wget` present, or it packages the
-  VSIX successfully and then fails with *"Failed to download the VS Code
-  server"*: `sudo apt-get update && sudo apt-get install -y wget`. The GUI route
-  avoids it entirely — **Ctrl+Shift+P → Extensions: Install from VSIX…** with
-  the WSL window focused installs to the WSL side.
-- **WSL does not inherit Windows' VPN resolver.** A private name resolves in the
-  browser and not in the distro, so the launcher cannot reach the gateway even
-  though the same URL works on the host. Add the host to `/etc/hosts` in the
-  distro, or set `[network] generateResolvConf = false` in `/etc/wsl.conf` and
-  point `/etc/resolv.conf` at the VPN's DNS server.
+Use this procedure when the repository is on the Windows file system and you
+open it in VS Code for Windows. You do not need WSL or a Dev Container. No part
+of the chain is POSIX-only. The extension finds `Scripts\*.exe`. The adapter is
+a Node script. `@openai/codex` supplies `win32-x64` and `win32-arm64` programs.
+
+Install these first: Docker Desktop, Python 3.11 or later with `uv`, Node.js 20
+or later, and VS Code 1.100 or later.
+
+**1. Start the gateway.** Run these commands in PowerShell in the repository
+root:
+
+```powershell
+docker compose up -d codex-gateway
+curl.exe -f http://127.0.0.1:8085/health
+```
+
+Type `curl.exe`, not `curl`. The name `curl` is an alias for
+`Invoke-WebRequest`, and `Invoke-WebRequest` does not accept these options. If
+the health check gives `503`, open <http://localhost:8085/> and sign in. Then
+do the health check again.
+
+**2. Build the launcher.** On Windows, `uv` puts the launcher in `Scripts`:
+
+```powershell
+uv sync --frozen
+.\.venv\Scripts\codex-gateway-acp.exe --help
+```
+
+Use `--help` for this test. If you start the launcher with no options, it waits
+for an ACP client and prints nothing.
+
+**3. Build and install the extension:**
+
+```powershell
+cd vscode-extension
+npm test
+npm run package
+code --install-extension .\codex-gateway-acp-vscode.vsix --force
+```
+
+Then reload VS Code.
+
+**4. Set the launcher path** in the user `settings.json` file. In JSON, write
+each backslash two times, or use forward slashes:
+
+```json
+{
+  "codexGateway.launcherPath": "C:\\src\\codex-gateway\\.venv\\Scripts\\codex-gateway-acp.exe",
+  "codexGateway.gatewayUrl": "http://127.0.0.1:8085/v1",
+  "codexGateway.model": "gpt-5.6-sol",
+  "codexGateway.initialMode": "read-only",
+  "codexGateway.permissionPolicy": "ask"
+}
+```
+
+If you open this repository as the workspace, do not set `launcherPath`. The
+extension finds `.venv\Scripts\codex-gateway-acp.exe` without help.
+
+**5. Send a task.** Open a local folder and trust it. Click **Codex Gateway**
+in the Activity Bar. Send a task. To read the diagnostic messages, run the
+command **Codex Gateway: Show ACP Logs**.
+
+To prevent a download at the first connection, install the adapter before you
+start. On Windows, `npm install -g` installs a `codex-acp.cmd` file, not a
+program file. Set `codexGateway.adapterPath` to that file, or to the
+`dist\index.js` file in the package. The launcher starts a `.js` file with
+`node`.
+
+Three parts of the launcher operate differently on Windows. You do not
+configure any of them:
+
+- **The launcher does not replace its own process.** Windows has no `exec`. The
+  `os.execvpe` function starts a new process and stops the current process. An
+  ACP client reads this as an agent that stops one second after it connects. On
+  Windows, the launcher starts the adapter as a child process and waits for it.
+  The launcher then returns the exit code of the adapter. The adapter keeps the
+  three standard handles, so the adapter writes to the ACP stdout directly.
+- **The launcher puts the adapter in a job object with the
+  `KILL_ON_JOB_CLOSE` limit.** VS Code stops a child process with
+  `TerminateProcess`. A program cannot intercept `TerminateProcess`. Without
+  the job object, each **Restart ACP Agent** command leaves a Codex process
+  that holds the pipes open.
+- **`CODEX_ACP_PACKAGE` must contain an exact `name@version` value.** On
+  Windows, `npx` is the `npx.cmd` file. Windows starts a command file with
+  `cmd.exe`, and `cmd.exe` reads the arguments a second time. The launcher
+  refuses a version range such as `^1.1.9`.
+
+Unit tests cover this Windows behaviour. Nobody has yet run the procedure on a
+Windows computer.
+
+#### When the repository is in WSL
+
+Use WSL only when the repository is in the WSL file system and you open it with
+the VS Code WSL remote. Do steps 1 to 5 in the distribution, and use
+distribution paths. Three problems can occur:
+
+- Keep the repository, `uv`, Node.js and the launcher in the distribution. Set
+  `codexGateway.launcherPath` to the path in the distribution. If the
+  repository is on the Windows file system, use the procedure above instead.
+- `code --install-extension` needs `wget`. Without `wget`, the command builds
+  the VSIX file and then gives the error *"Failed to download the VS Code
+  server"*. To install it, run
+  `sudo apt-get update && sudo apt-get install -y wget`. As an alternative,
+  press Ctrl+Shift+P, select **Extensions: Install from VSIX…**, and install
+  the file from the WSL window.
+- **WSL does not use the Windows VPN resolver.** A private name can resolve in
+  the browser but not in the distribution. The launcher then cannot connect to
+  the gateway. Add the host to `/etc/hosts` in the distribution. As an
+  alternative, set `[network] generateResolvConf = false` in `/etc/wsl.conf`
+  and point `/etc/resolv.conf` at the DNS server of the VPN.
 
 ### ACP troubleshooting
 
@@ -314,7 +415,8 @@ should already work:
 - **`codex-acp` or `npx` not found:** install Node.js 20+ and the pinned npm
   package, then set `codexGateway.adapterPath` to its absolute executable path.
 - **The launcher cannot be found:** set `codexGateway.launcherPath` to the
-  absolute `.venv/bin/codex-gateway-acp` path on the extension host.
+  absolute `.venv/bin/codex-gateway-acp` path on the extension host, or
+  `.venv\Scripts\codex-gateway-acp.exe` on Windows.
 - **404 for `/responses`:** `codexGateway.gatewayUrl` must be a base under
   which the gateway serves `/responses`. The recommended `/v1` base produces
   `/v1/responses`; the gateway also supports the bare base.
@@ -436,7 +538,8 @@ extension to that same side.
    ```
 
 2. **Check prerequisites:** Python 3.11+, Node.js 20+, VS Code 1.100+. On
-   Windows use WSL or a Dev Container — the launcher is a POSIX entry point.
+   Windows, use the procedure in [Windows](#windows) instead of the commands
+   below. Replace `127.0.0.1` with the gateway address from step 1.
 
 3. **Build the launcher** on the machine with your code:
 
@@ -472,7 +575,8 @@ extension to that same side.
    `launcherPath` must be absolute and must name the local copy. Omit it only
    when the open workspace *is* this checkout: auto-discovery looks in
    `<workspace>/.venv/bin` and `<workspace>/services/models/codex-gateway/.venv/bin`
-   and nowhere else. Keep the `/v1` — Codex appends `/responses` to it.
+   and nowhere else — `Scripts` in place of `bin` on Windows. Keep the `/v1` —
+   Codex appends `/responses` to it.
 
 6. **Open a trusted local folder**, click **Codex Gateway** in the Activity Bar,
    and send a task. If nothing happens, run **Codex Gateway: Show ACP Logs**;

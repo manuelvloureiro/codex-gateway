@@ -164,6 +164,66 @@ class TestAdapterCommand:
         with pytest.raises(acp.AcpConfigError, match="Node.js 20"):
             acp.adapter_command({})
 
+    def test_runs_a_javascript_adapter_through_node(self, monkeypatch):
+        # npm's global install writes shims, not an executable, so on Windows
+        # the adapter's own entry point is all there is to point at.
+        monkeypatch.setattr(
+            acp.shutil,
+            "which",
+            lambda name: r"C:\Program Files\nodejs\node.exe" if name == "node" else None,
+        )
+        assert acp.adapter_command(
+            {"CODEX_ACP_BIN": r"C:\npm\node_modules\@agentclientprotocol\codex-acp\dist\index.js"}
+        ) == [
+            r"C:\Program Files\nodejs\node.exe",
+            r"C:\npm\node_modules\@agentclientprotocol\codex-acp\dist\index.js",
+        ]
+
+    def test_reports_missing_node_for_a_javascript_adapter(self, monkeypatch):
+        monkeypatch.setattr(acp.shutil, "which", lambda _name: None)
+        with pytest.raises(acp.AcpConfigError, match="node was not found"):
+            acp.adapter_command({"CODEX_ACP_BIN": "/opt/codex-acp/dist/index.js"})
+
+    @pytest.mark.parametrize(
+        "package",
+        [
+            "@agentclientprotocol/codex-acp@1.1.9",
+            "codex-acp",
+            "codex-acp@1.2.0-beta.1",
+        ],
+    )
+    def test_accepts_an_exact_package_spec(self, package, monkeypatch):
+        monkeypatch.setattr(
+            acp.shutil,
+            "which",
+            lambda name: "/usr/bin/npx" if name == "npx" else None,
+        )
+        assert acp.adapter_command({"CODEX_ACP_PACKAGE": package})[-1] == package
+
+    @pytest.mark.parametrize(
+        "package",
+        [
+            # `npx` is `npx.cmd` on Windows, and CreateProcess runs a batch file
+            # through cmd.exe. Anything cmd.exe would re-read is refused here.
+            "codex-acp & calc.exe",
+            "codex-acp|calc",
+            "codex-acp@^1.1.9",
+            'codex-acp"',
+            "codex-acp %PATH%",
+            "../../evil",
+        ],
+    )
+    def test_rejects_a_package_spec_a_shell_could_reinterpret(
+        self, package, monkeypatch
+    ):
+        monkeypatch.setattr(
+            acp.shutil,
+            "which",
+            lambda name: "/usr/bin/npx" if name == "npx" else None,
+        )
+        with pytest.raises(acp.AcpConfigError, match="exact `name@version`"):
+            acp.adapter_command({"CODEX_ACP_PACKAGE": package})
+
 
 class TestEntryPoint:
     def test_execs_adapter_with_pristine_stdout(self, monkeypatch, capsys):
@@ -219,6 +279,28 @@ class TestEntryPoint:
         assert output.out == ""
         assert "cannot start ACP adapter" in output.err
 
+    def test_windows_waits_for_the_adapter_instead_of_execing(
+        self, monkeypatch, capsys
+    ):
+        # os.execvpe on Windows spawns a new process and terminates this one,
+        # so an ACP client watching this PID would see the agent die at once.
+        monkeypatch.setenv("CODEX_ACP_BIN", r"C:\opt\codex-acp.exe")
+        monkeypatch.setattr(acp.os, "name", "nt")
+        monkeypatch.setattr(
+            acp.os, "execvpe", lambda *_a: pytest.fail("must not exec on Windows")
+        )
+        captured = {}
+
+        def fake_run(command, environ, **_kwargs):
+            captured.update(command=command, environ=environ)
+            return 3
+
+        monkeypatch.setattr(acp, "run_windows", fake_run)
+        assert acp.main([]) == 3
+        assert captured["command"] == [r"C:\opt\codex-acp.exe"]
+        assert captured["environ"]["MODEL_PROVIDER"] == "codex-gateway"
+        assert capsys.readouterr().out == ""
+
     def test_main_command_dispatches_acp_subcommand(self, monkeypatch):
         seen = []
         monkeypatch.setattr(acp, "main", lambda args: seen.append(args) or 23)
@@ -263,3 +345,105 @@ class TestEntryPoint:
                             lambda port: pytest.fail("must not serve"))
         assert package_main.main(args) == 2
         assert "usage: codex-gateway" in capsys.readouterr().err
+
+
+class TestWindowsLauncher:
+    """This platform never calls `run_windows`, so the tests call it directly."""
+
+    def test_mirrors_the_adapter_exit_code_with_pristine_stdout(self, capsys):
+        spawned = {}
+
+        def popen(command, env):
+            spawned.update(command=command, env=env)
+            return _FakeProcess(exit_code=7)
+
+        assert (
+            acp.run_windows(
+                ["node", "index.js"],
+                {"CODEX_CONFIG": "{}"},
+                popen=popen,
+                job=lambda: None,
+            )
+            == 7
+        )
+        assert spawned["command"] == ["node", "index.js"]
+        assert spawned["env"] == {"CODEX_CONFIG": "{}"}
+        assert capsys.readouterr().out == ""
+
+    def test_ties_the_adapter_lifetime_to_a_job_object(self):
+        assigned = []
+        process = _FakeProcess()
+
+        acp.run_windows(
+            ["adapter"],
+            {},
+            popen=lambda command, env: process,
+            job=lambda: assigned.append,
+        )
+        assert assigned == [process]
+
+    def test_a_ctrl_c_does_not_abandon_the_adapter(self):
+        process = _FakeProcess(exit_code=0, interrupts=2)
+
+        assert (
+            acp.run_windows(
+                ["adapter"], {}, popen=lambda command, env: process, job=lambda: None
+            )
+            == 0
+        )
+        assert process.waits == 3
+
+    @pytest.mark.parametrize(
+        "job",
+        [
+            lambda: (_ for _ in ()).throw(OSError("access denied")),
+            lambda: (lambda _process: (_ for _ in ()).throw(OSError("denied"))),
+        ],
+    )
+    def test_an_unavailable_job_object_warns_but_still_launches(self, job, capsys):
+        assert (
+            acp.run_windows(
+                ["adapter"],
+                {},
+                popen=lambda command, env: _FakeProcess(exit_code=0),
+                job=job,
+            )
+            == 0
+        )
+        output = capsys.readouterr()
+        assert output.out == ""
+        assert "may outlive this launcher" in output.err
+
+    def test_a_missing_adapter_is_reported_on_stderr(self, monkeypatch, capsys):
+        monkeypatch.setenv("CODEX_ACP_BIN", r"C:\missing\codex-acp.exe")
+        monkeypatch.setattr(acp.os, "name", "nt")
+
+        def missing(_command, env):
+            raise FileNotFoundError("not found")
+
+        launch = acp.run_windows
+        monkeypatch.setattr(
+            acp,
+            "run_windows",
+            lambda command, environ: launch(
+                command, environ, popen=missing, job=lambda: None
+            ),
+        )
+        assert acp.main([]) == 127
+        output = capsys.readouterr()
+        assert output.out == ""
+        assert "cannot start ACP adapter" in output.err
+
+
+class _FakeProcess:
+    def __init__(self, exit_code: int = 0, interrupts: int = 0):
+        self.exit_code = exit_code
+        self.interrupts = interrupts
+        self.waits = 0
+
+    def wait(self) -> int:
+        self.waits += 1
+        if self.interrupts:
+            self.interrupts -= 1
+            raise KeyboardInterrupt
+        return self.exit_code

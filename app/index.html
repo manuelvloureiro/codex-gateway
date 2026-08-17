@@ -290,6 +290,13 @@
       means <em>your</em> machine; use the address above. Needs Python 3.11+,
       Node 20+, VS Code 1.100+.
     </p>
+    <div class="row">
+      <select id="acp-os" onchange="renderAcpCommands()">
+        <option value="posix">macOS · Linux</option>
+        <option value="win">Windows</option>
+      </select>
+      <span class="hint">the steps below follow this choice</span>
+    </div>
     <ol>
       <li>Build the launcher where your code is:
         <pre id="cmd-launcher"></pre>
@@ -309,26 +316,31 @@
     </ol>
   </details>
 
-  <!-- WSL is its own machine wearing Windows' clothes: separate filesystem,
-       separate resolver, separate VS Code server. Every step below is a thing
-       that looks like it should already work and does not. -->
+  <!-- WSL has its own file system, its own resolver and its own VS Code
+       server. The four steps above still apply, but they all run inside the
+       distribution. These three differences are the ones readers hit. -->
   <details>
-    <summary>Windows · WSL<span class="hint">three traps, all avoidable</span></summary>
-    <ol style="margin-top:.5rem">
-      <li><strong>Everything lives in WSL</strong> — checkout, <code>uv</code>,
-        Node, launcher. The launcher is a POSIX entry point; a Windows-side
-        checkout cannot run it, and <code>launcherPath</code> must be the WSL
-        path.</li>
-      <li><strong><code>code --install-extension</code> needs wget</strong> in
-        the distro, or it dies with <em>"Failed to download the VS Code
-        server"</em> after packaging the VSIX perfectly well:
+    <summary>WSL<span class="hint">only when the code is in the distribution</span></summary>
+    <p class="muted" style="margin-top:.5rem">
+      Windows itself needs no WSL: select <strong>Windows</strong> above and the
+      four steps run as they are. Use this block only when the repository is in
+      the WSL file system and you open it with the VS Code WSL remote. Then run
+      all four steps inside the distribution.
+    </p>
+    <ol>
+      <li><strong>Install everything in the distribution</strong> — repository,
+        <code>uv</code>, Node.js, launcher. Set <code>launcherPath</code> to the
+        path in the distribution.</li>
+      <li><strong><code>code --install-extension</code> needs wget.</strong>
+        Without it, the command builds the VSIX file and then gives the error
+        <em>"Failed to download the VS Code server"</em>:
         <pre>sudo apt-get update &amp;&amp; sudo apt-get install -y wget</pre>
-        Or skip the CLI: <strong>Ctrl+Shift+P → Extensions: Install from
-        VSIX…</strong> with the WSL window focused installs it to the right
-        side by itself.</li>
-      <li><strong>WSL does not inherit Windows' VPN resolver.</strong> The name
-        resolves in your browser and not in the distro, so the launcher cannot
-        reach the gateway. Point it at the host:
+        As an alternative, press <strong>Ctrl+Shift+P</strong>, select
+        <strong>Extensions: Install from VSIX…</strong> in the WSL window, and
+        install the file there.</li>
+      <li><strong>WSL does not use the Windows VPN resolver.</strong> A name can
+        resolve in the browser but not in the distribution, so the launcher
+        cannot reach the gateway. Add the host:
         <pre id="cmd-wsl-hosts"></pre>
       </li>
     </ol>
@@ -547,6 +559,47 @@ const DEFAULT_MODEL = "gpt-5.6-sol";
 const BASE = location.origin + "/v1";
 const LOOPBACK = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(location.hostname);
 
+// The launcher runs on the machine holding the code, so its path and shell are
+// that machine's, not this page's host. Windows differs in three places only:
+// `Scripts` instead of `bin`, an `.exe` name, and doubled backslashes in JSON.
+let acpModel = DEFAULT_MODEL;
+
+function renderAcpCommands() {
+  const win = $("acp-os").value === "win";
+  const launcher = win
+    ? String.raw`C:\src\codex-gateway\.venv\Scripts\codex-gateway-acp.exe`
+    : "/absolute/path/to/codex-gateway/.venv/bin/codex-gateway-acp";
+
+  // One command per line for Windows: PowerShell 5.1 has no `&&`, and a `;`
+  // would run the next command after a failed one.
+  $("cmd-launcher").textContent = win
+    ? "git clone <this-repo> codex-gateway\n" +
+      "cd codex-gateway\n" +
+      "uv sync --frozen\n" +
+      String.raw`.\.venv\Scripts\codex-gateway-acp.exe --help`
+    : "git clone <this-repo> codex-gateway && cd codex-gateway\n" +
+      "uv sync --frozen\n" +
+      ".venv/bin/codex-gateway-acp --help";
+
+  $("cmd-vsix").textContent = win
+    ? "cd vscode-extension\n" +
+      "npm test\n" +
+      "npm run package\n" +
+      String.raw`code --install-extension .\codex-gateway-acp-vscode.vsix --force`
+    : "cd vscode-extension\n" +
+      "npm test && npm run package\n" +
+      "code --install-extension ./codex-gateway-acp-vscode.vsix --force";
+
+  // JSON.stringify doubles the backslashes for the Windows path by itself.
+  $("cmd-settings").textContent = JSON.stringify({
+    "codexGateway.launcherPath": launcher,
+    "codexGateway.gatewayUrl": BASE,
+    "codexGateway.model": acpModel,
+    "codexGateway.initialMode": "read-only",
+    "codexGateway.permissionPolicy": "ask",
+  }, null, 2);
+}
+
 function renderConnect(model) {
   $("base-url").textContent = BASE;
 
@@ -554,23 +607,8 @@ function renderConnect(model) {
   // browser warning — which is every caller that matters here.
   $("ca-note").classList.toggle("hidden", !(location.protocol === "https:" && !LOOPBACK));
 
-  $("cmd-launcher").textContent =
-    "git clone <this-repo> codex-gateway && cd codex-gateway\n" +
-    "uv sync --frozen\n" +
-    ".venv/bin/codex-gateway-acp --help";
-
-  $("cmd-vsix").textContent =
-    "cd vscode-extension\n" +
-    "npm test && npm run package\n" +
-    "code --install-extension ./codex-gateway-acp-vscode.vsix --force";
-
-  $("cmd-settings").textContent = JSON.stringify({
-    "codexGateway.launcherPath": "/absolute/path/to/codex-gateway/.venv/bin/codex-gateway-acp",
-    "codexGateway.gatewayUrl": BASE,
-    "codexGateway.model": model,
-    "codexGateway.initialMode": "read-only",
-    "codexGateway.permissionPolicy": "ask",
-  }, null, 2);
+  acpModel = model;
+  renderAcpCommands();
 
   $("cmd-curl").textContent =
     `curl ${BASE}/chat/completions \\\n` +
@@ -659,6 +697,10 @@ async function probeCa() {
     $("ca-install").classList.remove("hidden");
   } catch { /* no CA configured, or unreachable — leave the note text alone */ }
 }
+
+// A guess, because the code is usually on the machine reading this page. The
+// selector above corrects it when it is not.
+$("acp-os").value = guessOs() === "win" ? "win" : "posix";
 
 renderConnect(DEFAULT_MODEL);   // render now; loadModels refines the model name
 probeCa();

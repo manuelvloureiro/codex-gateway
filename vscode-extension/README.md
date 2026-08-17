@@ -37,7 +37,8 @@ reinstall it after changing this directory.
    restart and immediately reconnect the agent process.
 
 The launcher is auto-discovered in either `.venv/bin` under the workspace or
-`services/models/codex-gateway/.venv/bin` in the monorepo. Otherwise it falls
+`services/models/codex-gateway/.venv/bin` in the monorepo. On Windows the
+extension looks in `Scripts` for `codex-gateway-acp.exe`. Otherwise it falls
 back to `codex-gateway-acp` on the extension host's `PATH`. Configure an
 explicit path with `codexGateway.launcherPath`.
 
