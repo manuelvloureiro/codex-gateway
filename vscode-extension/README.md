@@ -10,6 +10,19 @@ The extension runs in the workspace extension host, launches
 dedicated Activity Bar view. ACP permission requests are shown with VS Code's
 trusted Quick Pick UI, never inside the webview.
 
+**This is not a model provider.** It adds no entry to Chat's model picker, and
+installing it does not make the gateway's models available to Chat, inline
+completions, or any other extension. It gives Codex its own agent panel, where
+Codex App Server owns the loop, tools, sandbox, and approval modes. To use these
+models in the built-in Chat instead, configure the gateway as a Custom Endpoint
+provider — see "VS Code Chat" in the repository README. The two are independent
+and can both be installed.
+
+In a Remote SSH, Tunnel, or Dev Container window, `code --install-extension`
+targets the *desktop* VS Code rather than the remote extension host that
+actually runs this extension. See "Installing into a remote extension host" in
+the repository README.
+
 ## Test and package
 
 VS Code 1.100 or newer is required to install the extension. Node.js 20 or

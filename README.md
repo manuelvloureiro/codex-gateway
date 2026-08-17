@@ -95,6 +95,22 @@ fails if this table drifts from what the app registers.
 `/models`, `/responses` and `/chat/completions` are also served under `/v1`, for
 clients that keep the prefix.
 
+**`/models` reflects `CODEX_MODELS`, not the account.** It is a list someone
+typed, so it can silently omit models the subscription serves — and a client
+picks from that list, so an omission makes the model unreachable. The account's
+real catalogue comes from the Codex app-server, which is what the CLI's own
+picker is built from:
+
+```bash
+python3 scripts/discover_models.py            # what this account serves
+python3 scripts/discover_models.py --env      # a CODEX_MODELS= line for .env
+```
+
+It needs the `codex` CLI and a completed login, costs no model tokens, and
+handles no credential of its own — the CLI's session does the authenticating.
+Hidden models are excluded unless `--include-hidden` is passed; they are real
+and callable, but deliberately not offered to users.
+
 **Auth** — "admin" means the route requires `Authorization: Bearer <token>`
 *only* when `CODEX_ADMIN_TOKEN` is set; otherwise every route is open. The
 provider surface can never require it (see below).
@@ -114,9 +130,106 @@ base_url              = http://codex-gateway:8085
 allow_private_network = true
 ```
 
+## VS Code Chat
+
+Chat's model picker accepts a custom provider, so these models can sit beside
+the built-in ones and drive ask, edit, and agent mode. For ordinary editor work
+this is the route to use. It is not the ACP client further down: that one is a
+separate agent panel and puts nothing in the picker.
+
+**Chat view → model picker → Manage Models… → Custom Endpoint.** The dialog
+insists on an API key; the gateway is keyless, so any non-empty string does.
+
+VS Code stores the result in `chatLanguageModels.json`, and editing that file
+is faster than the dialog once the provider exists:
+
+| Windows | `%APPDATA%\Code\User\chatLanguageModels.json` |
+| --- | --- |
+| macOS | `~/Library/Application Support/Code/User/chatLanguageModels.json` |
+| Linux | `~/.config/Code/User/chatLanguageModels.json` |
+
+It is user-scope, so in a remote window it stays on the *client* while the
+requests leave from the remote host. Only the API key lives elsewhere, in
+secret storage, which is what `${input:...}` refers to. Fill one entry per
+model from `scripts/discover_models.py`:
+
+```json
+[
+  {
+    "name": "codex-gateway",
+    "vendor": "customendpoint",
+    "apiKey": "${input:chat.lm.secret.<generated>}",
+    "apiType": "chat-completions",
+    "models": [
+      {
+        "id": "gpt-5.6-sol",
+        "name": "GPT-5.6 Sol (Codex Gateway)",
+        "url": "http://<gateway-host>/v1",
+        "toolCalling": true,
+        "vision": true,
+        "maxInputTokens": 128000,
+        "maxOutputTokens": 16000,
+        "supportsReasoningEffort": ["low", "medium", "high", "xhigh", "max"]
+      },
+      {
+        "id": "gpt-5.4-mini",
+        "name": "GPT-5.4 Mini (Codex Gateway)",
+        "url": "http://<gateway-host>/v1",
+        "toolCalling": true,
+        "vision": true,
+        "maxInputTokens": 128000,
+        "maxOutputTokens": 16000,
+        "supportsReasoningEffort": ["low", "medium", "high", "xhigh"]
+      }
+    ]
+  }
+]
+```
+
+Four things that are easy to get wrong:
+
+- **`url` is a base, not an endpoint.** Chat appends the path itself, and
+  probes `<url>/models` to discover the catalogue. A URL ending in
+  `/responses` asks for `/v1/responses/models` and 404s before any prompt is
+  sent. Keep the `/v1`. Behind a reverse proxy the base carries no port —
+  `http://<gateway-host>/v1` rather than `http://<gateway-host>:8085/v1`; see
+  [Reaching it from another machine](#reaching-it-from-another-machine).
+- **`apiType` is set on the group, not just the model.** The dialog writes it
+  above `models`. A model-level key overrides the group, and the URL path is
+  consulted last — so editing the model and leaving the group alone changes
+  nothing.
+- **Either API type works.** `chat-completions` is translated to `/responses`;
+  `responses` is proxied. Both are normalized identically, so use whichever the
+  dialog gave you.
+- **`maxInputTokens` and `maxOutputTokens` are the client's own bookkeeping.**
+  The backend rejects `max_output_tokens` on the wire and the gateway strips
+  it, so these only shape how Chat trims context before sending.
+
+The schema requires `id`, `name`, `url`, `toolCalling`, `vision`,
+`maxOutputTokens`, and one of `maxInputTokens` or `contextWindow`; omit any and
+the editor marks the entry invalid.
+
+`supportsReasoningEffort` adds a Thinking Effort control next to the model.
+`reasoning` is the one tuning parameter the backend accepts, so that choice
+reaches it; `temperature` and `top_p` do not and are dropped. See
+[Behaviour worth knowing](#behaviour-worth-knowing). The valid levels are
+`low`, `medium`, `high`, `xhigh`, and `max` on the models that carry it —
+`discover_models.py` prints them per model. `minimal` and `ultra` appear
+elsewhere in Codex but `/responses` rejects both.
+
+**The request comes from wherever the Chat extension runs, not from the window
+you are looking at.** In a Remote-SSH, Tunnel, or Dev Container window that is
+the remote host, so the URL has to resolve *there*. `chatLanguageModels.json`
+meanwhile stays on the client, in the local VS Code user folder — the two live
+on opposite sides of the connection.
+
 ## ACP in VS Code
 
-ACP is an agent-to-editor protocol, not another HTTP endpoint. This repository
+ACP is an agent-to-editor protocol, not another HTTP endpoint. It gives Codex
+its *own* agent panel — Codex App Server owns the loop, its tools, its sandbox,
+and its approval modes. That is the reason to install it, and the reason not
+to: it adds no model to the Chat picker, and for using these models in ordinary
+editor work the section above is the shorter path. This repository
 now includes both sides needed by VS Code:
 
 - `codex-gateway-acp`, the agent-side stdio launcher
@@ -280,6 +393,8 @@ path for offline or tightly controlled environments.
   Do not broaden the keyless gateway's bind address beyond a trusted network.
 - With VS Code Remote SSH, install/configure the extension in the remote
   context and use paths and a gateway URL that are valid on that remote host.
+  See [Installing into a remote extension host](#installing-into-a-remote-extension-host)
+  — `code --install-extension` on that host does **not** do this.
 - If the gateway runs on another machine, keep its port on loopback and use an
   SSH tunnel such as `ssh -N -L 8085:localhost:8085 user@remote-host`; the ACP
   URL remains `http://127.0.0.1:8085/v1`.
@@ -291,6 +406,46 @@ path for offline or tightly controlled environments.
 - A repository on the Windows file system has no boundary. Use the procedure in
   the next section. WSL and Dev Containers are boundaries: install the launcher
   on the side that holds the code.
+
+### Installing into a remote extension host
+
+Remote SSH, Tunnels, and Dev Containers split the editor in two. The UI runs on
+your machine; anything with a `main` — this extension, and Chat itself — runs in
+the remote extension host. Both halves are called "VS Code" and they read
+different directories, so the install commands above can silently address the
+wrong one.
+
+| On the host holding the code | Desktop VS Code | Remote extension host |
+| --- | --- | --- |
+| Extensions | `~/.vscode/extensions` | `~/.vscode-server/extensions` |
+| Machine settings | user `settings.json` | `~/.vscode-server/data/Machine/settings.json` |
+
+`code --install-extension` writes to the first column. Worse, if the remote host
+*also* has desktop VS Code installed, `/usr/bin/code` wins the PATH lookup even
+inside a remote window's own terminal — the command reports success and the
+icon never appears.
+
+Install into the second column instead. From the client, use the Extensions
+view's **Install from VSIX…** with the window connected, and VS Code places a
+workspace extension correctly. From a shell on the remote host, use the
+server's own CLI rather than `code`:
+
+```bash
+ls ~/.vscode-server                     # exists => the window is remote
+SERVER=$(ls -dt ~/.vscode-server/cli/servers/Stable-*/server/bin \
+                ~/.vscode-server/bin/*/bin 2>/dev/null | head -1)
+"$SERVER/code-server" --install-extension ./codex-gateway-acp-vscode.vsix \
+  --extensions-dir ~/.vscode-server/extensions --force
+"$SERVER/code-server" --list-extensions --extensions-dir ~/.vscode-server/extensions
+```
+
+Settings follow the same split. In a remote window the user `settings.json`
+comes from the *client*, so values that are only true on the remote host — the
+absolute `launcherPath`, a gateway URL resolved from that side — belong in
+`~/.vscode-server/data/Machine/settings.json`. Every `codexGateway.*` setting is
+`resource`-scoped, so machine scope applies. That file often does not exist yet.
+
+Reload the window afterwards.
 
 ### Windows
 
@@ -411,7 +566,12 @@ distribution paths. Three problems can occur:
   adapter deliberately has no separate ChatGPT credential.
 - **No Codex Gateway icon:** install the generated VSIX, reload VS Code, and
   open a trusted local workspace. Web-only and untrusted workspaces are
-  intentionally unsupported.
+  intentionally unsupported. In a Remote SSH, Tunnel, or Dev Container window,
+  check *which* VS Code received the VSIX — see
+  [Installing into a remote extension host](#installing-into-a-remote-extension-host).
+- **Models missing from the Chat picker:** that is the other integration.
+  The ACP client contributes a panel, never a model. See
+  [VS Code Chat](#vs-code-chat).
 - **`codex-acp` or `npx` not found:** install Node.js 20+ and the pinned npm
   package, then set `codexGateway.adapterPath` to its absolute executable path.
 - **The launcher cannot be found:** set `codexGateway.launcherPath` to the
@@ -434,7 +594,7 @@ distribution paths. Three problems can occur:
 | `CODEX_GATEWAY_HOME` | `/data` | Where `auth.json` lives. |
 | `CODEX_GATEWAY_PORT` | `8085` | Listen port. `--port` on the command line wins. |
 | `CODEX_ADMIN_TOKEN` | *(unset)* | When set, `/auth/*` requires `Authorization: Bearer <token>`. Guards sign-in/out only — see below. |
-| `CODEX_MODELS` | `gpt-5.6-sol,gpt-5.4` | Static `/models` catalogue. |
+| `CODEX_MODELS` | `gpt-5.6-sol,gpt-5.4` | Static `/models` catalogue. Generate the real one with `scripts/discover_models.py --env`. |
 | `CODEX_BASE_URL` | ChatGPT backend | Upstream override. |
 | `CODEX_UI` | `1` | `0` stops serving the reference page at `/`. |
 | `CODEX_CA_FILE` | *(unset)* | PEM certificate to serve at `/ca.crt`. Set it when a private CA fronts this service, so clients can fetch the root instead of hunting for it. Nothing is guessed. |
@@ -454,6 +614,18 @@ distribution paths. Three problems can occur:
   credential problem, and a re-login cannot lift a rate limit.
 - **Refresh tokens are single-use.** Rotation is persisted under a lock, so
   concurrent requests cannot both consume the same token.
+- **A `system` role is rewritten to `developer`, on both surfaces.** The
+  backend answers `400 {"detail":"System messages are not allowed"}`, most
+  reliably for the canonical structured item VS Code Chat sends on every
+  request. `developer` carries the same meaning and is accepted, so the
+  request is fixed rather than failed. The chat-completions translation has
+  always done this; `/responses` now does it too.
+- **`temperature`, `top_p`, and `max_output_tokens` are dropped.** The
+  reasoning backend rejects them outright — `400 {"detail":"Unsupported
+  parameter: temperature"}` — rather than ignoring them, and nothing the
+  gateway advertises would let a client discover that. VS Code Chat sends
+  `temperature` on every request. `reasoning` is the one tuning parameter that
+  survives, which is what makes a Thinking Effort selection mean something.
 
 ## Development
 
@@ -521,6 +693,40 @@ Then open `http://192.0.2.10:8085/` from a peer. Two things to check:
 Set `CODEX_ADMIN_TOKEN` whenever you do this. Anyone who can reach the port can
 spend the subscription, so keep the subnet one you trust.
 
+**Reverse proxy on a private name** — leave the port on loopback and let a
+proxy that already faces the private network carry it. In Caddy that is three
+lines:
+
+```caddyfile
+# Gateway stays on 127.0.0.1:8085; this block is the only way onto the VPN.
+http://<gateway-name> {
+	reverse_proxy 127.0.0.1:8085
+}
+```
+
+Point the name at the host however that network resolves: a rewrite on the
+VPN's DNS server, or `/etc/hosts` on each peer. Clients then use
+`http://<gateway-name>/v1`: no port in the URL, and no client to reconfigure
+when the gateway moves hosts. Prefer it over binding an interface, for two
+reasons:
+
+- **`127.0.0.1:8085` keeps answering on the gateway host.** `CODEX_GATEWAY_BIND`
+  moves the published port; it does not add one.
+- **No firewall rule of its own.** Caddy already listens on a port the subnet
+  can reach, so there is no second hole to scope and audit.
+
+Completions stream as server-sent events, so the proxy has to flush
+`text/event-stream` as it arrives instead of buffering the response. Caddy does
+that by default. With nginx, set `proxy_buffering off`.
+
+The warning above applies here too, and applies harder. A name resolves for
+every peer on the subnet; a loopback port does not. `CODEX_ADMIN_TOKEN` guards
+`/auth/*` only, so anyone who can resolve and reach the name can spend the
+subscription. Plain HTTP is defensible when the only path to that name is a
+WireGuard subnet already encrypting every byte. On a wider network, terminate
+TLS and serve the root at `/ca.crt` with `CODEX_CA_FILE`, so clients fetch it
+instead of hunting for it.
+
 ### Driving it from VS Code on another machine
 
 The extension never speaks HTTP to the gateway. It spawns `codex-gateway-acp`
@@ -530,11 +736,12 @@ model traffic crosses the network. `extensionKind: workspace` pins the
 extension to that same side.
 
 1. **Reach the gateway.** Either bind a private interface as above, or leave it
-   on loopback and tunnel. Confirm before going further; nothing below works
-   until this does:
+   on loopback and tunnel, or front it with a reverse proxy on a private name.
+   Confirm before going further; nothing below works until this does:
 
    ```bash
    curl -sf http://<gateway-host>:8085/health && echo OK
+   curl -sf http://<gateway-name>/health && echo OK      # proxied: no port
    ```
 
 2. **Check prerequisites:** Python 3.11+, Node.js 20+, VS Code 1.100+. On

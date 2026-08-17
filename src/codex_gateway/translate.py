@@ -158,16 +158,47 @@ def codex_headers(token: str, account_id: str | None = None) -> dict[str, str]:
     return headers
 
 
+def _system_role_to_developer(item: Any) -> Any:
+    """Rewrite one ``system`` input item to ``developer``.
+
+    "System messages are not allowed" — the backend rejects the role outright,
+    and rejects it hardest in the canonical structured form
+    ``{"type": "message", "role": "system", "content": [{"type": "input_text",
+    ...}]}``.  It accepts the same item as ``developer``, which is exactly the
+    mapping ``messages_to_input`` has always applied on the chat-completions
+    side.  Responses-native clients still send ``system`` — VS Code Chat's
+    custom-endpoint provider does on every request — so rewrite it here rather
+    than hand back a 400 no client can act on.
+    """
+    if isinstance(item, dict) and item.get("role") == "system":
+        return {**item, "role": "developer"}
+    return item
+
+
+# Tuning knobs the reasoning backend refuses outright — "Unsupported parameter:
+# temperature".  They are not ignored upstream, they fail the whole request, and
+# nothing the gateway advertises lets a client discover that.  VS Code Chat
+# sends `temperature` on every request, so dropping these is the difference
+# between the provider working and not working at all.  `reasoning` is the one
+# control the backend does accept; see PASSTHROUGH_FIELDS.
+UNSUPPORTED_PARAMETERS = ("temperature", "top_p", "max_output_tokens")
+
+
 def coerce_body(body: dict[str, Any]) -> dict[str, Any]:
     """Apply the backend's non-negotiable request invariants."""
     out = dict(body)
     out["stream"] = True   # "Stream must be set to true"
     out["store"] = False   # "Store must be set to false"
 
+    for field in UNSUPPORTED_PARAMETERS:
+        out.pop(field, None)
+
     # "Input must be a list" — accept a bare string for convenience.
     value = out.get("input")
     if isinstance(value, str):
-        out["input"] = [{"role": "user", "content": value}]
+        value = [{"role": "user", "content": value}]
+    if isinstance(value, list):
+        out["input"] = [_system_role_to_developer(item) for item in value]
     return out
 
 
@@ -263,8 +294,10 @@ def tools_to_responses(tools: list | None) -> list:
 
 
 # Passed straight through when present; anything else is dropped, because the
-# Responses API rejects unknown chat-completions parameters outright.
-PASSTHROUGH_FIELDS = ("temperature", "top_p", "max_output_tokens", "reasoning")
+# Responses API rejects unknown chat-completions parameters outright.  Sampling
+# and length controls are absent deliberately — see UNSUPPORTED_PARAMETERS,
+# which strips them for native Responses callers too.
+PASSTHROUGH_FIELDS = ("reasoning",)
 
 
 def chat_request_to_responses(body: dict[str, Any]) -> dict[str, Any]:

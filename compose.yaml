@@ -28,6 +28,12 @@ services:
       CODEX_GATEWAY_HOME: /data
       CODEX_GATEWAY_PORT: "8085"
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # The catalogue served at /models. Clients pick from this list, so a
+      # model missing here is invisible even though the backend accepts it.
+      # Regenerate from the live account with scripts/discover_models.py --env.
+      # The fallback repeats the application default: an empty value would
+      # otherwise serve an empty catalogue rather than falling back.
+      CODEX_MODELS: ${CODEX_MODELS:-gpt-5.6-sol,gpt-5.4}
       # When set, /auth/* requires `Authorization: Bearer <token>`.
       CODEX_ADMIN_TOKEN: ${CODEX_ADMIN_TOKEN:-}
       # 0 stops serving the reference page at /.

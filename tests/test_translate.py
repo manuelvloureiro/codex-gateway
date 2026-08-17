@@ -34,6 +34,48 @@ class TestCoerceBody:
         translate.coerce_body(body)
         assert body["stream"] is False
 
+    def test_structured_system_message_becomes_developer(self):
+        # "System messages are not allowed". This is the exact shape VS Code
+        # Chat's custom-endpoint provider sends, and the one the backend
+        # rejects; the loose string form below it is coerced upstream instead.
+        item = {"type": "message", "role": "system",
+                "content": [{"type": "input_text", "text": "Be terse."}]}
+        assert translate.coerce_body({"input": [item]})["input"] == [
+            {"type": "message", "role": "developer",
+             "content": [{"type": "input_text", "text": "Be terse."}]}
+        ]
+
+    def test_loose_system_message_becomes_developer(self):
+        assert translate.coerce_body(
+            {"input": [{"role": "system", "content": "Be terse."}]}
+        )["input"] == [{"role": "developer", "content": "Be terse."}]
+
+    def test_other_roles_and_non_message_items_are_untouched(self):
+        items = [
+            {"role": "user", "content": "hi"},
+            {"role": "developer", "content": "already fine"},
+            {"type": "function_call_output", "call_id": "c1", "output": "done"},
+            "not a dict",
+        ]
+        assert translate.coerce_body({"input": list(items)})["input"] == items
+
+    def test_does_not_mutate_a_caller_input_item(self):
+        item = {"role": "system", "content": "Be terse."}
+        translate.coerce_body({"input": [item]})
+        assert item["role"] == "system"
+
+    @pytest.mark.parametrize("field", translate.UNSUPPORTED_PARAMETERS)
+    def test_rejected_tuning_parameters_are_dropped(self, field):
+        # "Unsupported parameter: temperature" — these fail the whole request
+        # rather than being ignored. VS Code Chat sends temperature every time.
+        assert field not in translate.coerce_body({"model": "m", field: 1})
+
+    def test_reasoning_survives(self):
+        # The one tuning control the backend does accept, and the one that
+        # makes the model picker's Thinking Effort setting mean anything.
+        out = translate.coerce_body({"model": "m", "reasoning": {"effort": "low"}})
+        assert out["reasoning"] == {"effort": "low"}
+
 
 class TestCodexHeaders:
     def test_pins_the_first_party_originator(self):
@@ -186,12 +228,12 @@ class TestChatRequestToResponses:
         out = translate.chat_request_to_responses({
             "model": "gpt-5.6-sol",
             "messages": [{"role": "user", "content": "hi"}],
-            "temperature": 0.2,
+            "reasoning": {"effort": "low"},
             "stream": False,
         })
         assert out["model"] == "gpt-5.6-sol"
         assert out["input"] == [{"role": "user", "content": "hi"}]
-        assert out["temperature"] == 0.2
+        assert out["reasoning"] == {"effort": "low"}
         # Invariants apply regardless of what the client asked for.
         assert out["stream"] is True
         assert out["store"] is False
